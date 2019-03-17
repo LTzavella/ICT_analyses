@@ -1,0 +1,836 @@
+---
+title: "Analysis"
+author: "Loukia Tzavella"
+date: "03/03/2018"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Data pre-processing & exclusions
+
+* Required packages
+
+```{r}
+#Please note that certain packages may not be compatible with your version of R
+#R should be updated to the latest version- this script uses R version 3.4.3 (2017-11-30)
+
+required.packages <- c("BayesFactor", "nlme", "plyr", "here", "data.table", "reshape2", "ggplot2", "viridis", "cowplot", "compute.es", "lme4")
+new.packages <- required.packages[!(required.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)>0) {install.packages(required.packages)}
+
+require(BayesFactor)
+require(nlme)
+require(plyr)
+require(here)
+require(data.table)
+require(reshape2)
+require(ggplot2)
+require(viridis)
+require(cowplot)
+require(compute.es)
+require(lme4);
+```
+
+* Read csv files from the R project sub-folder and add all dataframes to a list
+
+```{r}
+#Save names from complete data files in the 'data' folder
+files <- list.files(here("data"), all.files = TRUE, full.names = FALSE, no.. = TRUE, pattern = "\\.csv$")
+
+#Make a list of all data files
+data <- lapply(here("data", files), function(x) {fread(x)})
+
+#Change structure of files into data frames
+data <- lapply(data, function(x) as.data.frame(x))
+
+#Read file with demographic information from all recruited participants
+demographics <- read.csv(here("demographics.csv"), header=T)
+
+#Randomly generated subject IDs have created a few duplicates and a new column for 'ID' will be created
+#This takes into account the script start date so that unique IDs can be obtained
+demographics$ID <- as.character(paste(demographics$subject, demographics$date, demographics$time, sep="_"))
+demographics$ID <- gsub("[[:punct:]]", "_", demographics$ID)
+
+#Do the same for the main data
+data <- lapply(data, transform, ID = as.character(paste(subject,script.startdate,script.starttime, sep="_")))
+
+#Remove symbols from created ID codes
+data <- lapply(data, transform, ID = gsub("[[:punct:]]", "_", ID))
+
+#CHECK FOR DUPLICATES***** FROM 15/10 to 17/10
+```
+
+* Select data from participants who do not meet the exclusion criteria below:
+
+-  Vegetarian or vegan diet
+-  Past and/or current history of any psychiatric disorder(s)
+-  Past and/or current history of drug and/or alcohol abuse 
+
+```{r}
+#Assign names to the list elements (subject IDs) in case exclusions need to be checked manually
+subs <- lapply(data, function(x) head(x$ID, n=1))
+subs <- lapply(subs, function(x) as.character(x))
+names(data) <- subs
+
+#Obtain subject IDs for participants who do not meet the exclusion criteria
+veg_include <- unique(demographics$ID[demographics$vegan_criterion_response==2])
+psych_include <- unique(demographics$ID[demographics$psych_disorders_criterion_response==2])
+drug_include <- unique(demographics$ID[demographics$psych_drugs_criterionoption4_response=="None"])
+
+
+# * Remove one participant with binge eating disorder
+data2 <- data[sapply(data, function(x) any(x$values.eating==3))]
+
+
+#Changes are not applied to the original 'data' list so that it can be accessed later if required
+data1 <- data[sapply(data, function(x) any(x$ID %in% veg_include))]
+data1 <- data1[sapply(data1, function(x) any(x$ID %in% psych_include))]
+data1 <- data1[sapply(data1, function(x) any(x$ID %in% drug_include))]
+
+```
+
+* Timing-related exclusions:
+-  The duration of each frame in the main training task or evaluation task is not 17 ms
+-  Trials with stimulus onset times with a delay greater than 150 ms
+
+```{r}
+data1 <- data1[sapply(data1, function(x) any(x$latency[x$values.frame_go==4]==17))]
+```
+ITI numbers- the program was fixed and then mostly run in the lab so we don't need to check ?
+data1 <- lapply(data1 , transform, iti_check = ifelse(values.iti<800 & values.iti>600, "700", ifelse(values.iti>400 & values.iti<600, "500", "NA")))
+
+#Check ITI numbers later
+
+
+* Performance-related exclusions:
+
+-  Proportion of correct responses in go trials < 85%
+-  Proportion of correct responses in stop trials < 65% 
+-  Proportion of correct responses in stop-change trials < 50% 
+
+```{r}
+#Split list of dataframes into groups and get training data
+
+group1 <- data[sapply(data, function(x) all(x$values.current_group == 1))]
+group2 <- data[sapply(data, function(x) all(x$values.current_group == 2))]
+group3 <- data[sapply(data, function(x) all(x$values.current_group == 3))]
+
+group1_train <- lapply(group1, subset, blockcode=="go_training")
+group2_train <- lapply(group2, subset, blockcode=="stop_training")
+group3_train <- lapply(group3, subset, blockcode=="change_training")
+
+#Recode accuracy values to only have 1s (correct) and 0s (incorrect)
+
+group1_train <- lapply(group1_train, transform, accuracy=ifelse(values.ns_accuracy==1, "1", "0"))
+
+group2_train <- lapply(group2_train, transform, ns_accuracy=ifelse(values.ns_accuracy==1, "1", "0"))
+group2_train <- lapply(group2_train, transform, ss_accuracy=ifelse(values.ss_accuracy==1, "1", "0"))
+
+group3_train <- lapply(group3_train, transform, ns_accuracy=ifelse(values.ns_accuracy==1, "1", "0"))
+group3_train <- lapply(group3_train, transform, sc_accuracy=ifelse(values.sc_accuracy==1, "1", "0"))
+
+
+#Change accuracy variable structure into integer format 
+
+group1_train <- lapply(group1_train, transform, accuracy = as.numeric(as.character(accuracy)))
+
+group2_train <- lapply(group2_train, transform, ns_accuracy = as.numeric(as.character(ns_accuracy)))
+group2_train <- lapply(group2_train, transform, ss_accuracy = as.numeric(as.character(ss_accuracy)))
+
+group3_train <- lapply(group3_train, transform, ns_accuracy = as.numeric(as.character(ns_accuracy)))
+group3_train <- lapply(group3_train, transform, sc_accuracy = as.numeric(as.character(sc_accuracy)))
+
+#Select the final frames from all trial types to get the final accuracy values
+
+group1_train_acc <- lapply(group1_train, subset, values.frame_go==112 | values.frame_signal==112)
+group1_train_acc  <- lapply(group1_train_acc , droplevels)
+
+group2_train_acc <- lapply(group2_train, subset, values.frame_go==112 | values.frame_signal==112)
+group2_train_acc  <- lapply(group2_train_acc , droplevels)
+
+group3_train_acc <- lapply(group3_train, subset, values.frame_go==112 | values.frame_signal==112)
+group3_train_acc  <- lapply(group3_train_acc , droplevels)
+
+# Get mean proportions of correct responses 
+
+group1_means <- ldply(group1_train_acc, function(x) goPC= mean(x$accuracy))
+
+group2_means <- ldply(group2_train_acc, function(x) {c(stopPC = mean(x$ss_accuracy[x$values.frame_signal==112]), goPC = mean(x$ns_accuracy[x$values.frame_go==112]))})
+
+group3_means <- ldply(group3_train_acc, function(x) {c(changePC = mean(x$sc_accuracy[x$values.frame_signal==112]), goPC = mean(x$ns_accuracy[x$values.frame_go==112]))})
+
+#Subset datasets for participants who do not meet the exclusion criteria
+
+group1_include <- unique(group1_means$.id[group1_means$V1>=0.85])
+
+group2_include <- unique(group2_means$.id[group2_means$goPC>=0.85 & group2_means$stopPC>=0.65])
+
+group3_include <- unique(group3_means$.id[group3_means$goPC>=0.85 & group3_means$changePC>=0.5])
+
+#Check exclusion numbers separately for reporting purposes if needed
+
+#group2_include <- unique(group2_means$.id[group2_means$goPC>=0.85])
+#group2_include <- unique(group2_means$.id[group2_means$stopPC>=0.5])
+
+#group3_include <- unique(group3_means$.id[group3_means$goPC>=0.85])
+#group3_include <- unique(group3_means$.id[group3_means$changePC>=0.5])
+
+
+#Clear datasets 
+
+group1 <- group1[sapply(group1, function(x) any(x$ID %in% group1_include))]
+group2 <- group2[sapply(group2, function(x) any(x$ID %in% group2_include))]
+group3 <- group3[sapply(group3, function(x) any(x$ID %in% group3_include))]
+
+groups_include <- c(group1_include, group2_include, group3_include)
+
+data1 <- data1[sapply(data1, function(x) any(x$ID %in% groups_include))]
+```
+
+* Process desire to eat and tastiness data for analyses
+
+```{r}
+des <- ldply(data1, subset, blockcode=="desiretoeat" & values.marker==2)
+tas <- ldply(data1, subset, blockcode=="tastiness" & values.marker==2)
+
+#Run function for removing duplicate items 
+rm_d <- function(data) {
+  x <- unique(data[duplicated(data$values.eval_jpg), ])
+  r <- as.numeric(rownames(x))
+  data <- subset(data, !(rownames(data) %in% r))
+  return(data)
+}
+
+#Apply function to the two datasets
+tas <- gapply(tas, FUN = rm_d, groups=tas$ID)
+des <- gapply(des, FUN = rm_d, groups=des$ID)
+
+#des1 <- des[sapply(des, function(x) all(x$values.eval_side == 1))]
+#des2 <- des[sapply(des, function(x) all(x$values.eval_side == 2))]
+
+#tas1 <- tas[sapply(tas, function(x) all(x$values.eval_side == 1))]
+#tas2 <- tas[sapply(tas, function(x) all(x$values.eval_side == 2))]
+
+
+#Coordinate log transformation for EET responses with conditional logic for counterbalancing- side of EET positive & negative anchors
+#Apply function to subsetted dataframe with completed trials
+
+transform_x <- function(min, max, x, data)
+{newx <- (x - min)/(max-min)
+newx <- newx * 100
+newdata <- as.data.frame(cbind(data, newx))
+newx <- as.numeric(newdata$newx)
+return(newdata)
+}
+
+des <- lapply(des, function(x) transform_x(x$expressions.min_eval, x$expressions.max_eval, x$values.markerx, x))
+tas <- lapply(tas, function(x) transform_x(x$expressions.min_eval, x$expressions.max_eval, x$values.markerx, x))
+
+#Change the names and structure of variables to be included in later analyses
+
+tas <- lapply(tas, transform, healthiness = as.factor(values.eval_healthiness))
+tas <- lapply(tas, transform, novelty = as.factor(values.eval_novelty))
+tas <- lapply(tas, transform, selection = as.factor(values.eval_selection))
+tas <- lapply(tas, transform, item = as.factor(values.eval_jpg))
+
+des <- lapply(des, transform, healthiness = as.factor(values.eval_healthiness))
+des <- lapply(des, transform, novelty = as.factor(values.eval_novelty))
+des <- lapply(des, transform, selection = as.factor(values.eval_selection))
+des <- lapply(des, transform, item = as.factor(values.eval_jpg))
+
+tas <- lapply(tas, function(x) cbind(x, xcoord=ifelse(x$values.eval_side==2, abs(x$newx-100), x$newx)))
+des <- lapply(des, function(x) cbind(x, xcoord=ifelse(x$values.eval_side==2, abs(x$newx-100), x$newx)))
+
+#Split datasets according to healthiness and training conditions
+
+tas_h <- lapply(tas, subset, healthiness==1)
+tas_u <- lapply(tas, subset, healthiness==2)
+
+des_h <- lapply(des, subset, healthiness==1)
+des_u <- lapply(des, subset, healthiness==2)
+
+eval <- function (x) {
+ c(X.S.o= mean(x$xcoord[x$selection==1 & x$novelty==1]), 
+    X.S.n= mean(x$xcoord[x$selection==1 & x$novelty==2]),
+    X.N.o= mean(x$xcoord[x$selection==2 & x$novelty==1]),
+    X.N.n= mean(x$xcoord[x$selection==2 & x$novelty==2]),
+    X.S= mean(x$xcoord[x$selection==1]),
+    X.N= mean(x$xcoord[x$selection==2]),
+    X.o= mean(x$xcoord[x$novelty==1]),
+    X.n= mean(x$xcoord[x$novelty==2]),
+    X= mean(x$xcoord),
+    Group = mean(x$values.current_group))}
+
+tas_us <- ldply(tas_u, eval)
+tas_hs <- ldply(tas_h, eval)
+
+des_us <- ldply(des_u, eval)
+des_hs <- ldply(des_h, eval)
+
+#Files for JASP
+
+tas_u_stop <- subset(tas_us, Group!=3)
+tas_h_stop <- subset(tas_hs, Group!=3)
+
+des_u_stop <- subset(des_us, Group!=3)
+des_h_stop <- subset(des_hs, Group!=3)
+
+tas_u_change <- subset(tas_us, Group!=2)
+tas_h_change <- subset(tas_hs, Group!=2)
+
+des_u_change <- subset(des_us, Group!=2)
+des_h_change <- subset(des_hs, Group!=2)
+
+write.csv(tas_u_stop, file=here("JASP", "tas_u_stop.csv"), row.names = FALSE)
+write.csv(tas_h_stop, file=here("JASP", "tas_h_stop.csv"), row.names = FALSE)
+write.csv(des_u_stop, file=here("JASP", "des_u_stop.csv"), row.names = FALSE)
+write.csv(des_h_stop, file=here("JASP", "des_h_stop.csv"), row.names = FALSE)
+
+write.csv(tas_u_change, file=here("JASP", "tas_u_change.csv"), row.names = FALSE)
+write.csv(tas_h_change, file=here("JASP", "tas_h_change.csv"), row.names = FALSE)
+write.csv(des_u_change, file=here("JASP", "des_u_change.csv"), row.names = FALSE)
+write.csv(des_h_change, file=here("JASP", "des_h_change.csv"), row.names = FALSE)
+
+#Dataframes for linear model comparison (BayesFactor package)
+tas_h <- ldply(tas_h, as.data.frame)
+tas_u <- ldply(tas_u, as.data.frame)
+
+des_h <- ldply(des_h, as.data.frame)
+des_u <- ldply(des_u, as.data.frame)
+
+tas_h$ID <- droplevels(as.factor(tas_h$ID))
+tas_u$ID <- droplevels(as.factor(tas_u$ID))
+
+des_h$ID <- droplevels(as.factor(des_h$ID))
+des_u$ID <- droplevels(as.factor(des_u$ID))
+```
+
+# Confirmatory analyses that determine the stopping rule for data collection (H1 and H2)
+
+DV1: Tastiness ratings for healthy foods
+DV2: Tastiness ratings for unhealthy foods
+DV3: Desire to eat ratings for healthy foods
+DV4: Desire to eat ratings for unhealthy foods
+
+_Note_. Linear mixed models that account for by-item and by-subject variation (random effects)
+
+tb: bayesian t-test
+tf: frequentist t-test
+td: effect size
+
+## H1 analyses: 
+
+"Compared to go training (control), both stop and stop-change training tasks will reduce positive evalutions for unhealthy foods"
+
+1.1. Establish whether the training group as a fixed effect adds to the null model
+  1.1.1. DV2 model comparison
+  1.1.2. DV4 model comparison
+  
+1.2. Test posthoc comparisons for the two experimental groups separately
+  1.2.1. DV2 directional t-test: Go > Change
+  1.2.2. DV2 directional t-test: Go > Stop
+  1.2.3. DV4 directional t-test: Go > Change
+  1.2.4. DV4 directional t-test: Go > Stop
+
+_Note for Chris_ The secondary hypotheses here are not affected by the stopping rule because they were introduced as descriptive comparisons. 
+We never specified that any of the following hypotheses would somehow be formally tested (e.g., difference scores).
+
+"Stop-change training will lead to a greater decrease in ratings of tastiness and desire to eat for unhealthy foods than stop training, relative to the go group"
+
+1.3. Show graphically/descriptively that the mean difference (if in the expected direction) will be greater for stop-change compared to stop group
+     This can possibly be done in one graph - see multiple violin plots for different factors and data
+     
+     We can also do this formally by comparing the two difference scores: 
+     Go-Stop < Go-Change (positive scores indicate that unhealthy foods were rated less positively from the experimental to the control groups)
+     Independent samples t-test for this
+     
+"The expected differences in the evaluations of foods will be greater for desire to eat than tastiness ratings"
+
+1.4. Again, show graphically / with descriptive statistics, if this 
+
+```{r}
+#Analyses for H1 - DV2
+
+#Tastiness ratings - unhealthy foods
+tas_u1 <- lmBF(data=tas_u, xcoord ~ values.current_group * selection * novelty + item + ID, whichRandom = c("item", "ID"))
+tas_u2 <- lmBF(data=tas_u, xcoord ~ values.current_group * selection + item + ID, whichRandom = c("item", "ID"))
+tas_u3 <- lmBF(data=tas_u, xcoord ~ values.current_group * novelty + item + ID, whichRandom = c("item", "ID"))
+tas_u4 <- lmBF(data=tas_u, xcoord ~ values.current_group + novelty * selection + item + ID, whichRandom = c("item", "ID"))
+tas_u5 <- lmBF(data=tas_u, xcoord ~ values.current_group * novelty + selection + item + ID, whichRandom = c("item", "ID"))
+tas_u6 <- lmBF(data=tas_u, xcoord ~ values.current_group * selection + novelty + item + ID, whichRandom = c("item", "ID"))
+tas_u7 <- lmBF(data=tas_u, xcoord ~ values.current_group + selection + novelty + item + ID, whichRandom = c("item", "ID"))
+tas_u8 <- lmBF(data=tas_u, xcoord ~ values.current_group + selection + item + ID, whichRandom = c("item", "ID"))
+tas_u9 <- lmBF(data=tas_u, xcoord ~ values.current_group + novelty + item + ID, whichRandom = c("item", "ID"))
+tas_u10 <- lmBF(data=tas_u, xcoord ~ values.current_group + item + ID, whichRandom = c("item", "ID"))
+
+#Get ouput for all 'tas_u' models
+lm.1.1.1 <- c(tas_u1, tas_u2, tas_u3, tas_u4, tas_u5, tas_u6, tas_u7, tas_u8, tas_u9, tas_u10)
+lm.1.1.1
+```
+tas_u1
+The training group-only model is not preferred to the intercept only model (BF10=1.26). However, the best model includes the interaction between training group and selection condition (BF10=6.56).
+
+When comparing the model that includes both training group and selection condition as fixed effects to the model contatining only training group as a fixed effect, the model that considers selection condition is moderately preferred (BF10=8.98).
+
+This was given by tas_u8/tas_u10
+
+When comparing the model which includes an interaction between these fixed effects to the model without the interaction term (tas_u2/tas_u8), the model that accounts for the interaction is preferred (BF10=5.81).
+
+*When comparing the model with the interaction between group and selection alone to the model with the additional fixed effect of novelty, the model without the novelty term is preferred (BF10=7.84). Given by tas_u2/tas_u6.
+
+```{r}
+#Which model index is the best? 
+which.max(lm.1.1.1)
+```
+
+```{r}
+#Compare the 5 best models to the best
+bfs.1.1.1 <- head(lm.1.1.1) / max(lm.1.1.1)
+bfs.1.1.1
+
+#plot(tas_u_bfs) will give you a graph where the models are ranked 1-6
+```
+
+
+1.2.1. DV2 - Group 1 > Group 3 (results consistent with JASP output)
+```{r}
+tf.1.2.1 <- t.test(X ~ Group, data= tas_u_change, var.eq=TRUE, alternative="greater")
+td.1.2.1 <- tes(t = as.numeric(tf.1.2.1[1]), n.1 = sum(tas_u_change$Group==1), n.2 = sum(tas_u_change$Group==3))
+
+tb.1.2.1 <- ttestBF(tas_u_change$X[tas_u_change$Group==1], tas_u_change$X[tas_u_change$Group==3], paired=FALSE, nullInterval = c(0, Inf))
+```
+
+Results
+```{r}
+tb.1.2.1
+
+tf.1.2.1
+
+td.1.2.1
+```
+
+1.2.2. DV2 - Group 1 > Group 2 (results consistent with JASP output)
+```{r}
+tf.1.2.2 <- t.test(X ~ Group, data= tas_u_stop, var.eq=TRUE, alternative="greater")
+td.1.2.2 <- tes(t = as.numeric(tf.1.2.2[1]), n.1 = sum(tas_u_stop$Group==1), n.2 = sum(tas_u_stop$Group==2))
+
+tb.1.2.2 <- ttestBF(tas_u_stop$X[tas_u_stop$Group==1], tas_u_stop$X[tas_u_stop$Group==2], paired=FALSE, nullInterval = c(0, Inf))
+
+# This t-test does not give the result as JASP for now
+```
+
+
+Results
+```{r}
+tb.1.2.2
+
+tf.1.2.2
+
+td.1.2.2
+```
+
+
+1.2.3. DV4 - Group 1 > Group 3 (results consistent with JASP output)
+```{r}
+tf.1.2.3 <- t.test(X ~ Group, data= des_u_change, var.eq=TRUE, alternative="greater")
+td.1.2.3 <- tes(t = as.numeric(tf.1.2.3[1]), n.1 = sum(des_u_change$Group==1), n.2 = sum(des_u_change$Group==3))
+
+tb.1.2.3 <- ttestBF(des_u_change$X[des_u_change$Group==1], des_u_change$X[des_u_change$Group==3], paired=FALSE, nullInterval = c(0, Inf))
+```
+
+Results
+```{r}
+tb.1.2.3
+
+tf.1.2.3
+```
+
+1.2.4. DV4 - Group 1 > Group 2 (results consistent with JASP output)
+```{r}
+tf.1.2.4 <- t.test(X ~ Group, data= des_u_stop, var.eq=TRUE, alternative="greater")
+td.1.2.4 <- tes(t = as.numeric(tf.1.2.4[1]), n.1 = sum(des_u_stop$Group==1), n.2 = sum(des_u_stop$Group==2))
+
+tb.1.2.4 <- ttestBF(des_u_stop$X[des_u_stop$Group==1], des_u_stop$X[des_u_stop$Group==2], paired=FALSE, nullInterval = c(0, Inf))
+```
+
+```{r}
+tb.1.2.4
+
+tf.1.2.4
+```
+
+```{r}
+#Desire to eat ratings - unhealthy foods
+des_u1 <- lmBF(data=des_u, xcoord ~ values.current_group * selection * novelty + item + ID, whichRandom = c("item", "ID"))
+des_u2 <- lmBF(data=des_u, xcoord ~ values.current_group * selection + item + ID, whichRandom = c("item", "ID"))
+des_u3 <- lmBF(data=des_u, xcoord ~ values.current_group * novelty + item + ID, whichRandom = c("item", "ID"))
+des_u4 <- lmBF(data=des_u, xcoord ~ values.current_group + novelty * selection + item + ID, whichRandom = c("item", "ID"))
+des_u5 <- lmBF(data=des_u, xcoord ~ values.current_group * novelty + selection + item + ID, whichRandom = c("item", "ID"))
+des_u6 <- lmBF(data=des_u, xcoord ~ values.current_group * selection + novelty + item + ID, whichRandom = c("item", "ID"))
+des_u7 <- lmBF(data=des_u, xcoord ~ values.current_group + selection + novelty + item + ID, whichRandom = c("item", "ID"))
+des_u8 <- lmBF(data=des_u, xcoord ~ values.current_group + selection + item + ID, whichRandom = c("item", "ID"))
+des_u9 <- lmBF(data=des_u, xcoord ~ values.current_group + novelty + item + ID, whichRandom = c("item", "ID"))
+des_u10 <- lmBF(data=des_u, xcoord ~ values.current_group + item + ID, whichRandom = c("item", "ID"))
+
+#Get ouput for all 'tas_u' models
+lm.1.1.2 <- c(des_u1, des_u2, des_u3, des_u4, des_u5, des_u6, des_u7, des_u8, des_u9, des_u10)
+lm.1.1.2
+```
+
+```{r}
+#Which model index is the best? 
+which.max(lm.1.1.2)
+```
+
+```{r}
+#Compare the 5 best models to the best
+bfs.1.1.2 <- head(lm.1.1.2) / max(lm.1.1.2)
+bfs.1.1.2
+
+#plot(des_u_bfs) will give you a graph where the models are ranked 1-6
+```
+
+
+## H2 analyses: 
+
+"Stop-change training will have a positive effect on the evaluations of healthy foods relative to baseline"
+
+2.1. Establish whether the training group as a fixed effect adds to the null model
+  2.1.1. DV1 model comparison
+  2.1.2. DV3 model comparison
+
+2.2. Test whether healthy foods were rated more positively from the change group to the control
+  2.2.1. DV1 directional t-test: Go < Change
+  2.2.2. DV3 directional t-test: Go < Change
+  
+
+```{r}
+#Analyses for H2 (and H3)  
+
+#Tastiness ratings - healthy foods
+tas_h1 <- lmBF(data=tas_h, xcoord ~ values.current_group * selection * novelty + item + ID, whichRandom = c("item", "ID"))
+tas_h2 <- lmBF(data=tas_h, xcoord ~ values.current_group * selection + item + ID, whichRandom = c("item", "ID"))
+tas_h3 <- lmBF(data=tas_h, xcoord ~ values.current_group * novelty + item + ID, whichRandom = c("item", "ID"))
+tas_h4 <- lmBF(data=tas_h, xcoord ~ values.current_group + novelty * selection + item + ID, whichRandom = c("item", "ID"))
+tas_h5 <- lmBF(data=tas_h, xcoord ~ values.current_group * novelty + selection + item + ID, whichRandom = c("item", "ID"))
+tas_h6 <- lmBF(data=tas_h, xcoord ~ values.current_group * selection + novelty + item + ID, whichRandom = c("item", "ID"))
+tas_h7 <- lmBF(data=tas_h, xcoord ~ values.current_group + selection + novelty + item + ID, whichRandom = c("item", "ID"))
+tas_h8 <- lmBF(data=tas_h, xcoord ~ values.current_group + selection + item + ID, whichRandom = c("item", "ID"))
+tas_h9 <- lmBF(data=tas_h, xcoord ~ values.current_group + novelty + item + ID, whichRandom = c("item", "ID"))
+tas_h10 <- lmBF(data=tas_h, xcoord ~ values.current_group + item + ID, whichRandom = c("item", "ID"))
+
+#Get ouput for all 'tas_u' models
+lm.2.1.1 <- c(tas_h1, tas_h2, tas_h3, tas_h4, tas_h5, tas_h6, tas_h7, tas_h8, tas_h9, tas_h10)
+lm.2.1.1
+```
+
+```{r}
+#Which model index is the best? 
+which.max(lm.2.1.1)
+```
+
+```{r}
+#Compare the 5 best models to the best
+bfs.2.1.1 <- head(lm.2.1.1) / max(lm.2.1.1)
+bfs.2.1.1
+
+#plot(bfs.2.1.1) will give you a graph where the models are ranked 1-6
+```
+
+
+2.2.1. DV1 - Group 1 < Group 3 
+```{r}
+tf.2.2.1 <- t.test(X ~ Group, data= tas_h_change, var.eq=TRUE, alternative="less")
+td.2.2.1 <- tes(t = as.numeric(tf.2.2.1[1]), n.1 = sum(tas_h_change$Group==1), n.2 = sum(tas_h_change$Group==3))
+
+tb.2.2.1 <- ttestBF(tas_h_change$X[tas_h_change$Group==1], tas_h_change$X[tas_h_change$Group==3], paired=FALSE, nullInterval = c(-Inf, 0))
+
+#Evidence for the null-> 1/tb.2.2.1[1] (BF01)
+```
+
+```{r}
+tb.2.2.1
+
+tf.2.2.1
+```
+
+2.2.2. DV3 - Group 1 < Group 3 
+```{r}
+tf.2.2.2 <- t.test(X ~ Group, data= des_h_change, var.eq=TRUE, alternative="less")
+td.2.2.2 <- tes(t = as.numeric(tf.2.2.2[1]), n.1 = sum(des_h_change$Group==1), n.2 = sum(des_h_change$Group==3))
+
+tb.2.2.2 <- ttestBF(des_h_change$X[des_h_change$Group==1], des_h_change$X[des_h_change$Group==3], paired=FALSE, nullInterval = c(-Inf, 0))
+```
+
+```{r}
+tb.2.2.2
+
+tf.2.2.2
+```
+
+2.2.3. DV1 - Group 1 = Group 2 
+
+```{r}
+tf.2.2.3 <- t.test(X ~ Group, data= tas_h_stop, var.eq=TRUE, alternative="two.sided")
+td.2.2.3 <- tes(t = as.numeric(tf.2.2.3[1]), n.1 = sum(tas_h_stop$Group==1), n.2 = sum(tas_h_stop$Group==2))
+
+tb.2.2.3 <- ttestBF(tas_h_stop$X[tas_h_stop$Group==1], tas_h_stop$X[tas_h_stop$Group==2], paired=FALSE)
+```
+```{r}
+tb.2.2.3
+
+tf.2.2.3
+```
+
+2.2.4. DV3 - Group 1 = Group 2 
+
+```{r}
+tf.2.2.4 <- t.test(X ~ Group, data= des_h_stop, var.eq=TRUE, alternative="two.sided")
+td.2.2.4 <- tes(t = as.numeric(tf.2.2.4[1]), n.1 = sum(des_h_stop$Group==1), n.2 = sum(des_h_stop$Group==2))
+
+tb.2.2.4 <- ttestBF(des_h_stop$X[des_h_stop$Group==1], des_h_stop$X[des_h_stop$Group==2], paired=FALSE)
+```
+
+```{r}
+tb.2.2.4
+
+tf.2.2.4
+```
+
+```{r}
+#Tastiness ratings - unhealthy foods
+des_h1 <- lmBF(data=des_h, xcoord ~ values.current_group * selection * novelty + item + ID, whichRandom = c("item", "ID"))
+des_h2 <- lmBF(data=des_h, xcoord ~ values.current_group * selection + item + ID, whichRandom = c("item", "ID"))
+des_h3 <- lmBF(data=des_h, xcoord ~ values.current_group * novelty + item + ID, whichRandom = c("item", "ID"))
+des_h4 <- lmBF(data=des_h, xcoord ~ values.current_group + novelty * selection + item + ID, whichRandom = c("item", "ID"))
+des_h5 <- lmBF(data=des_h, xcoord ~ values.current_group * novelty + selection + item + ID, whichRandom = c("item", "ID"))
+des_h6 <- lmBF(data=des_h, xcoord ~ values.current_group * selection + novelty + item + ID, whichRandom = c("item", "ID"))
+des_h7 <- lmBF(data=des_h, xcoord ~ values.current_group + selection + novelty + item + ID, whichRandom = c("item", "ID"))
+des_h8 <- lmBF(data=des_h, xcoord ~ values.current_group + selection + item + ID, whichRandom = c("item", "ID"))
+des_h9 <- lmBF(data=des_h, xcoord ~ values.current_group + novelty + item + ID, whichRandom = c("item", "ID"))
+des_h10 <- lmBF(data=des_h, xcoord ~ values.current_group + item + ID, whichRandom = c("item", "ID"))
+
+#Get ouput for all 'des_h' models
+lm.2.1.2 <- c(des_h1, des_h2, des_h3, des_h4, des_h5, des_h6, des_h7, des_h8, des_h9, des_h10)
+lm.2.1.2
+```
+
+```{r}
+#Which model index is the best? 
+which.max(lm.2.1.2)
+```
+
+```{r}
+#Compare the 5 best models to the best
+bfs.2.1.2 <- head(lm.2.1.2) / max(lm.2.1.2)
+bfs.2.1.2
+```
+Bayesian LMEs will be conducted in order to assess whether there is considerable evidence for differences or similarities in goRTs for healthy (DV1) and unhealthy foods (DV2) in the experimental training groups compared to the control group. For these comparisons, the RT difference score for pre and post go tests will be used. Random effects for subjects and items will be added to the models.
+
+--> it is hypothesized that there will be a difference in the experimental versus the control group between ‘go’ reaction time (goRT) difference scores in the go-test (post-goRT – pre-goRT), for both healthy and unhealthy foods. It is expected that goRTs for unhealthy foods will be longer after training, while goRTs for healthy foods will be faster.
+
+```{r}
+#We need to get difference scores for goRT (post-pre) - mean RTs
+go_test <- lapply(data1, subset, blockcode=="go_test" | blockcode=="go_test_end")
+
+stopping <- function(x, y, t, data) {
+  x <- as.numeric(x)
+  y <- as.numeric(y)
+  prevX <- c(0, x [1:(nrow(data)-1)])
+  nextX <- c(x[2:(nrow(data))], x[nrow(data)])
+  prevY <- c(0, y[1: (nrow(data)-1)])
+  nextY <- c(y[2:(nrow(data))], y[nrow(data)])
+  movedX <- x - prevX
+  movedY <- y - prevY
+  rt_sample1 <- lag(t, 2)
+  coords <- cbind(prevX, nextX, prevY, nextY, movedX, movedY, rt_sample1)
+  coords <- as.data.frame(coords)
+  data <- cbind(data, coords)
+  return(data)
+}
+#change functions with lead and lag later- much nicer
+
+go_test2 <- lapply(go_test, function(x) stopping(x$values.mousex, x$values.mousey, x$values.total_rt,  x))
+go_test2 <- lapply(go_test2, transform, stopping = ifelse(movedX < 20 & movedY < 20, "1", "0"))
+
+go_test2<- lapply(go_test2, subset,  values.target_reached>0 & values.target_first==1 & values.target_swap==0 & stopping==1)
+
+#Get unique trialnumbers for pre and post go test blocks 
+go_test2 <- lapply(go_test2, transform, trial_code = paste(values.trialnumber, blockcode, sep="_"))
+go_test2 <- lapply(go_test2, transform, stopping = as.numeric(as.character(stopping)))
+
+go_test2 <- lapply(go_test2, transform, sample = ave(stopping, trial_code, FUN=cumsum))  
+
+go_test3 <- lapply(go_test2, subset, sample==3)
+
+
+#correct responses only
+
+#From pre-registered methods:
+
+#For the go tests and training tasks, ‘completion time’ will be defined as the time from initiation to the sample where participants stop moving their mouse within the picture (target or non-target) boundaries. Stopping will be defined as a zero change in x-and y-coordinates for three samples. Completion time in that case will be referred to as ‘go RT’.
+
+go_test2<- lapply(go_test, subset,  values.target_reached>0 & (values.nomovement>0 & values.nomovement<=3))
+go_test2 <- lapply(go_test2, subset, values.nomovement==1)
+
+go_means <- ldply(go_test3, function(x) aggregate(x$rt_sample1 ~ x$values.current_group * x$blockcode * x$values.target_healthiness, data=x, mean))
+go_means <- transform(go_means, end = c(go_means$`x$rt_sample1`[-1], NA))
+go_means <- subset(go_means, go_means$x.blockcode=="go_test")
+go_names <- c("ID", "group", "blockcode", "healthiness", "go_pre", "go_post")
+go_means <- setNames(go_means, go_names)
+
+go_means$DRT <- go_means$go_post - go_means$go_pre
+
+#Median reaction times in food prime trials
+
+go_means <- ldply(go_test2, function(x) aggregate(x$values.total_rt ~ x$values.current_group * x$blockcode * x$values.target_healthiness, data=x, mean))
+
+go_means <- transform(go_means, end = c(go_means$`x$rt_sample1`[-1], NA))
+
+go_means <- subset(go_means, go_means$x.blockcode=="go_test")
+
+go_names <- c("ID", "group", "blockcode", "healthiness", "go_pre", "go_post")
+go_means <- setNames(go_means, go_names)
+
+go_means$DRT <- go_means$go_post - go_means$go_pre
+
+go_h <- subset(go_means, healthiness==1)
+go_u <- subset(go_means, healthiness==2)
+
+go_h_stop <- subset(go_h, group!=3)
+go_h_change <- subset(go_h, group!=2)
+
+go_u_stop <- subset(go_u, group!=3)
+go_u_change <- subset(go_u, group!=2)
+
+write.csv(go_h_stop, file=here("JASP", "go_h_stop.csv"), row.names = FALSE)
+write.csv(go_h_change, file=here("JASP", "go_h_change.csv"), row.names = FALSE)
+
+write.csv(go_u_stop, file=here("JASP", "go_u_stop.csv"), row.names = FALSE)
+write.csv(go_u_change, file=here("JASP", "go_u_change.csv"), row.names = FALSE)
+
+
+#A negative difference score indicates that participants were faster to respond after training
+#To interpret the results we need to know the average difference for each group- 
+```
+
+```{r}
+go_test2 <- ldply(go_test2, as.data.frame)
+
+go_test2$condition <- ifelse(go_test2$values.target_healthiness==1 & go_test2$blockcode=="go_test" & go_test2$values.current_group==1,"1", 
+                      ifelse(go_test2$values.target_healthiness==1 & go_test2$blockcode=="go_test" & go_test2$values.current_group==2,"2",
+                      ifelse(go_test2$values.target_healthiness==1 & go_test2$blockcode=="go_test" & go_test2$values.current_group==3,"3",
+                      ifelse(go_test2$values.target_healthiness==1 & go_test2$blockcode=="go_test_end" & go_test2$values.current_group==1,"4",
+                      ifelse(go_test2$values.target_healthiness==1 & go_test2$blockcode=="go_test_end" & go_test2$values.current_group==2,"5",
+                      ifelse(go_test2$values.target_healthiness==1 & go_test2$blockcode=="go_test_end" & go_test2$values.current_group==3,"6",
+                      ifelse(go_test2$values.target_healthiness==2 & go_test2$blockcode=="go_test" & go_test2$values.current_group==1,"7", 
+                      ifelse(go_test2$values.target_healthiness==2 & go_test2$blockcode=="go_test" & go_test2$values.current_group==2,"8",
+                      ifelse(go_test2$values.target_healthiness==2 & go_test2$blockcode=="go_test" & go_test2$values.current_group==3,"9",
+                      ifelse(go_test2$values.target_healthiness==2 & go_test2$blockcode=="go_test_end" & go_test2$values.current_group==1,"10",
+                      ifelse(go_test2$values.target_healthiness==2 & go_test2$blockcode=="go_test_end" & go_test2$values.current_group==2,"11",
+                      ifelse(go_test2$values.target_healthiness==2 & go_test2$blockcode=="go_test_end" & go_test2$values.current_group==3,"12", NA))))))))))))
+
+go_test2$participant <- go_test2$ID
+go_test2$rt <- go_test2$values.total_rt
+go_test2$acc
+  
+go_h_data <- subset(go_test2, values.target_healthiness==1)
+go_u_data <- subset(go_test2, values.target_healthiness==2)
+```
+
+#### Mean instead of median RTs at the participant level and outlier exclusion criteria
+
+> Prepare data for 'trimr' functions  that removes outliers based on absolute values and/or SDs
+> The package requires that certain data columns are named exaclty as shown below:
+  participant, condition, rt, accuracy 
+
+* Change structure of datalists with correct RTs only
+```{r}
+#Our data column names are consistent with the trimr package except for 'condition'
+
+#To capture each cell of the design we will use the variable 'trial' 
+#which contains the unique trialcodes and save a copy in a factor format
+
+
+food1_cor <- lapply(food1_cor, transform, condition = as.factor(trial))
+food2_cor <- lapply(food2_cor, transform, condition = as.factor(trial))
+
+nonfood1_cor <- lapply(nonfood1_cor, transform, condition = as.factor(trial))
+nonfood2_cor <- lapply(nonfood2_cor, transform, condition = as.factor(trial))
+```
+
+* Outlier exclusion 1: Remove RTs <250 ms
+
+```{r}
+food1_RT1 <- lapply(food1_cor, function(x) x<- absoluteRT(x, minRT=250, maxRT = 1500, returnType = "raw", omitErrors = FALSE))
+food2_RT1 <- lapply(food2_cor, function(x) x<- absoluteRT(x, minRT=250, maxRT = 1500, returnType = "raw", omitErrors = FALSE))
+
+nonfood1_RT1 <- lapply(nonfood1_cor, function(x) x<- absoluteRT(x, minRT=250, maxRT = 1500, returnType = "raw", omitErrors = FALSE))
+nonfood2_RT1 <- lapply(nonfood2_cor, function(x) x<- absoluteRT(x, minRT=250, maxRT = 1500, returnType = "raw", omitErrors = FALSE))
+```
+
+* Outlier exclusion 2: Remove RTs >2.5 SDs from the mean of each design cell
+
+```{r}
+#perParticipant would normally be set to TRUE, but for a list of dataframes from individual participants this is not needed.
+food1_RT2 <- lapply(food1_cor, function(x) x<- sdTrim(x, minRT=0, sd=2.5, perCondition = TRUE, perParticipant = FALSE, returnType = "raw", omitErrors = FALSE))  
+food2_RT2 <- lapply(food2_cor, function(x) x<- sdTrim(x, minRT=0, sd=2.5, perCondition = TRUE, perParticipant = FALSE, returnType = "raw", omitErrors = FALSE))  
+
+nonfood1_RT2 <- lapply(nonfood1_cor, function(x) x<- sdTrim(x, minRT=0, sd=2.5, perCondition = TRUE, perParticipant = FALSE, returnType = "raw", omitErrors = FALSE))  
+nonfood2_RT2 <- lapply(nonfood2_cor, function(x) x<- sdTrim(x, minRT=0, sd=2.5, perCondition = TRUE, perParticipant = FALSE, returnType = "raw", omitErrors = FALSE))  
+```
+
+
+#For the models we actually need the full data
+```{r}
+go_h1 <- lmBF(data=go_h_data, values.total_rt ~ values.current_group * blockcode + values.target_jpg + ID, whichRandom = c("values.target_jpg", "ID"))
+go_h2 <- lmBF(data=go_h_data, values.total_rt ~ values.current_group + blockcode + values.target_jpg + ID, whichRandom = c("values.target_jpg", "ID"))
+go_h3 <- lmBF(data=go_h_data, values.total_rt ~ values.current_group + values.target_jpg + ID, whichRandom = c("values.target_jpg", "ID"))
+go_h4 <- lmBF(data=go_h_data, values.total_rt ~ blockcode + values.target_jpg + ID, whichRandom = c("values.target_jpg", "ID"))
+
+go_h_all <- c(go_h1, go_h2, go_h3, go_h4)
+
+go_h_all
+
+which.max(go_h_all)
+```
+```{r}
+go_u1 <- lmBF(data=go_u_data, values.total_rt ~ values.current_group * blockcode + values.target_jpg + ID, whichRandom = c("values.target_jpg", "ID"))
+go_u2 <- lmBF(data=go_u_data, values.total_rt ~ values.current_group + blockcode + values.target_jpg + ID, whichRandom = c("values.target_jpg", "ID"))
+go_u3 <- lmBF(data=go_u_data, values.total_rt ~ values.current_group + values.target_jpg + ID, whichRandom = c("values.target_jpg", "ID"))
+go_u4 <- lmBF(data=go_u_data, values.total_rt ~ blockcode + values.target_jpg + ID, whichRandom = c("values.target_jpg", "ID"))
+
+go_u_all <- c(go_u1, go_u2, go_u3, go_u4)
+
+go_u_all
+
+which.max(go_u_all)
+```
+
+```{r}
+#Healthy foods: the diff scores will be lower for the change group than the go group
+gotest1 <- ttestBF(go_means$DRT[go_means$group==3 & go_means$healthiness==1], go_means$DRT[go_means$group==1 & go_means$healthiness==1], paired=FALSE, nullInterval = c(-Inf,0))
+
+gotest1
+
+#Evidence for the null BF0 = 9.64
+
+mean(go_means$DRT[go_means$group==3 & go_means$healthiness==1])
+mean(go_means$DRT[go_means$group==1 & go_means$healthiness==1])
+```
+```{r}
+gotest2 <- ttestBF(go_means$DRT[go_means$group==3 & go_means$healthiness==2], go_means$DRT[go_means$group==1 & go_means$healthiness==2], paired=FALSE, nullInterval = c(0, Inf))
+
+gotest2
+
+mean(go_means$DRT[go_means$group==3 & go_means$healthiness==2])
+mean(go_means$DRT[go_means$group==1 & go_means$healthiness==2])
+```
+
+## Mouse-tracking analyses
+
+```{r}
+
+```
+

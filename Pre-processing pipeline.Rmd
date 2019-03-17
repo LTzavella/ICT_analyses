@@ -1,0 +1,235 @@
+---
+title: "Pre-processing pipeline"
+author: "Loukia Tzavella"
+date: "12/02/2019"
+output: html_document
+---
+
+#### Set up R environment and import data files 
+
+> The scripts for analyses are designed to be run in sequence:
+  1. Pre-processing pipeline.Rmd
+  2. Pre-registered analyses.Rmd
+  3. Sensitivity analyses. Rmd
+  4. Exploratory analyses.Rmd
+  
+  
+> The scripts should be run in a session open under 'ICT.RProj'
+> The R environment will include a number of data objects and functions after pre-processing the data.
+> These can later be used in analyses scripts. However, if you want to revisit analyses at a later point
+  you could save the R environment using the code below.
+  save(list = ls(all.names = TRUE), file = here("R_Objects.RData"), envir = .GlobalEnv)
+
+* Install and/or load required R packages 
+
+```{r message=FALSE}
+required.packages <- c("BayesFactor", "nlme", "plyr", "here", "data.table", "reshape2", "ggplot2", "viridis", "cowplot", "compute.es", "lme4", "trimr", "jmv", "dplyr")
+new.packages <- required.packages[!(required.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)>0) {install.packages(required.packages)}
+
+require(BayesFactor)
+require(nlme)
+require(plyr)
+require(here)
+require(data.table)
+require(reshape2)
+require(ggplot2)
+require(viridis)
+require(cowplot)
+require(compute.es)
+require(lme4)
+require(trimr)
+require(jmv)
+require(dplyr)
+```
+
+* Read csv files from the specified directory and create data lists
+
+```{r}
+#Save names from complete data files in the 'data' folder
+files <- list.files(here("data"), all.files = TRUE, full.names = FALSE, no.. = TRUE, pattern = "\\.csv$")
+
+#Make a list of all data files
+data <- lapply(here("data", files), function(x) {fread(x)})
+
+#Change structure of files into data frames
+data <- lapply(data, function(x) as.data.frame(x))
+
+#Read file with demographic information from all participants
+demographics <- read.csv(here("demographics.csv"), header=T)
+
+#Randomly generated subject IDs have created a few duplicates and a new column for 'ID' will be created
+#This takes into account the script start date so that unique IDs can be obtained
+demographics$ID <- as.character(paste(demographics$subject, demographics$date, demographics$time, sep="_"))
+demographics$ID <- gsub("[[:punct:]]", "_", demographics$ID)
+
+#Do the same for the main data
+data <- lapply(data, transform, ID = as.character(paste(subject,script.startdate,script.starttime, sep="_")))
+
+#Remove symbols from created ID codes
+data <- lapply(data, transform, ID = gsub("[[:punct:]]", "_", ID))
+```
+
+
+* Exclude participants according to the criteria outlined below (see 'Participants' section):
+
+-  Vegetarian or vegan diet
+-  Past and/or current history of any psychiatric disorder(s)
+-  Past and/or current history of drug and/or alcohol abuse 
+-  Binge eating disorder
+
+```{r}
+#Assign names to the list elements (subject IDs) in case exclusions need to be checked manually
+subs <- lapply(data, function(x) head(x$ID, n=1))
+subs <- lapply(subs, function(x) as.character(x))
+names(data) <- subs
+
+#Obtain subject IDs for participants who do *not* meet the exclusion criteria
+veg_none <- unique(demographics$ID[demographics$vegan_criterion_response==2])
+psych_none <- unique(demographics$ID[demographics$psych_disorders_criterion_response==2])
+drug_none <- unique(demographics$ID[demographics$psych_drugs_criterionoption4_response=="None"])
+
+#Keep dataframes for included participants in the list "data1"
+data1 <- data[sapply(data, function(x) any(x$ID %in% veg_none))]
+data1 <- data1[sapply(data1, function(x) any(x$ID %in% psych_none))]
+data1 <- data1[sapply(data1, function(x) any(x$ID %in% drug_none))]
+
+# Exclude participants with binge eating disorder
+data1 <- data1[sapply(data1, function(x) any(x$values.eating==4))]
+
+#Examine participant numbers for exploratory analyses
+
+#veg <- unique(demographics$ID[demographics$vegan_criterion_response==1])
+
+#veg_data <- data[sapply(data, function(x) any(x$ID %in% veg))]
+#veg_data1 <- veg_data[sapply(veg_data, function(x) any(x$values.current_group==1))]
+#veg_data2 <- veg_data[sapply(veg_data, function(x) any(x$values.current_group==2))]
+#veg_data3 <- veg_data[sapply(veg_data, function(x) any(x$values.current_group==3))]
+
+#psych_yes <- unique(demographics$ID[demographics$psych_disorders_criterion_response==3])
+
+#psych_data <- data[sapply(data, function(x) any(x$ID %in% psych_yes))]
+#psych_data1 <- psych_data[sapply(psych_data, function(x) any(x$values.current_group==1))]
+#psych_data2 <- psych_data[sapply(psych_data, function(x) any(x$values.current_group==2))]
+#psych_data3 <- psych_data[sapply(psych_data, function(x) any(x$values.current_group==3))]
+
+#drugs <- unique(demographics$ID[demographics$psych_drugs_criterionoption1_response=="Drug abuse"])
+#alcohol <- unique(demographics$ID[demographics$psych_drugs_criterionoption2_response=="Alcohol abuse"])
+```
+
+* Performance-related exclusions:
+
+-  Proportion of correct responses in go trials < 85%
+-  Proportion of correct responses in stop trials < 65% 
+-  Proportion of correct responses in stop-change trials < 50% 
+
+-  Proportion of succesful stops in stop change trials <65% 
+-  
+
+```{r message=FALSE}
+
+stopping2 <- function(x, y, t, data) {
+  x <- as.numeric(x)
+  y <- as.numeric(y)
+  prevX <- lag(x,1)
+  nextX <- lead(x,1)
+  prevY <- lag(y,1)
+  nextY <- lead(y,1)
+  movedX <- abs(x - prevX)
+  movedY <- abs(y - prevY)
+  rt_sample1 <- lag(t, 2)
+  coords <- cbind(prevX, nextX, prevY, nextY, movedX, movedY, rt_sample1)
+  coords <- as.data.frame(coords)
+  data <- cbind(data, coords)
+  return(data)
+}
+
+data1 <- lapply(data1, function(x) stopping2(x$values.mousex, x$values.mousey, x$values.total_rt,  x))
+data1 <- lapply(data1, transform, stopping = ifelse(movedX < 20 & movedY < 20, "1", "0"))
+
+data1 <- lapply(data1, transform, stopping = as.numeric(as.character(stopping)))
+
+#For some reason if there are NAs in the vector, the cumsum function won't work properly so we need to transform NAs into 0s
+data1 <- lapply(data1, transform, stopping = ifelse(is.na(stopping), 0, stopping))
+
+data1 <- lapply(data1, transform, sample = ave(stopping,cumsum(stopping==0),FUN=cumsum))  
+
+data1 <- lapply(data1, transform, successful_stop = ifelse(sample==6, 1, 0))
+
+```
+
+```{r}
+#Split list of dataframes into groups and get training data
+
+group1 <- data1[sapply(data1, function(x) all(x$values.current_group == 1))]
+group2 <- data1[sapply(data1, function(x) all(x$values.current_group == 2))]
+group3 <- data1[sapply(data1, function(x) all(x$values.current_group == 3))]
+
+group1_train <- lapply(group1, subset, blockcode=="go_training")
+group2_train <- lapply(group2, subset, blockcode=="stop_training")
+group3_train <- lapply(group3, subset, blockcode=="change_training")
+
+
+group2_train <- lapply(group2_train, transform, ns_accuracy=ifelse(values.ns_accuracy==1, "1", "0"))
+group2_train <- lapply(group2_train, transform, ss_accuracy=ifelse((trialcode=="post_ss_left"|trialcode=="post_ss_right") & successful_stop==1, "1", "0"))
+
+group2_train <- lapply(group2_train, transform, ss_accuracy = as.numeric(as.character(ss_accuracy)))
+
+#We need to copy the created accuracy variable for stop trials to the last frame of each trial for subsetting and mean calculations
+
+group2_train <- lapply(group2_train, transform, ss_acc2 = ave(ss_accuracy,cumsum(values.frame_signal==0),FUN=cumsum))  
+group2_train <- lapply(group2_train, transform, ss_accuracy=ifelse(ss_acc2>=1, "1", "0"))
+
+group2_train <- lapply(group2_train, transform, ns_accuracy = as.numeric(as.character(ns_accuracy)))
+group2_train <- lapply(group2_train, transform, ss_accuracy = as.numeric(as.character(ss_accuracy)))
+
+
+group2_train_acc <- lapply(group2_train, subset, values.frame_go==112 | values.frame_signal==112)
+group2_train_acc  <- lapply(group2_train_acc , droplevels)
+
+group2_means <- ldply(group2_train_acc, function(x) {c(stopPC = mean(x$ss_accuracy[x$values.frame_signal==112]), goPC = mean(x$ns_accuracy[x$values.frame_go==112]))})
+
+group2_include <- unique(group2_means$.id[group2_means$goPC>=0.85 & group2_means$stopPC>=0.65])
+
+
+#Inspect group 3
+
+check <- group3_train$`75686967_102618_16_03_34`
+check <- subset(check, values.trialnumber==20|values.trialnumber==24|values.trialnumber==44|values.trialnumber==48|values.trialnumber==16)
+write.csv(check, file="change_check.csv")
+
+
+check <- subset(check, trialcode=="post_cs_right" | trialcode=="post_cs_left")
+
+check2 <- lapply(group3_train_acc, subset, values.sc_accuracy==3)
+check21 <- check2$`371006321_83117_22_00_19`
+write.csv(check21, file="change_check21.csv")
+
+check <- subset(check, values.trialnumber == 80)
+write.csv(check, file="change_check.csv")
+
+group3_train_acc <- lapply(group3_train, subset, values.frame_go==112 | values.frame_signal==112)
+group3_train_acc  <- lapply(group3_train_acc , droplevels)
+
+# Get mean proportions of correct responses 
+
+group3_train <- lapply(group3_train, transform, ns_accuracy=ifelse(values.ns_accuracy==1, "1", "0"))
+group3_train <- lapply(group3_train, transform, sc_accuracy=ifelse(values.sc_accuracy==1, "1", "0"))
+
+group3_train <- lapply(group3_train, transform, ns_accuracy = as.numeric(as.character(ns_accuracy)))
+group3_train <- lapply(group3_train, transform, sc_accuracy = as.numeric(as.character(sc_accuracy)))
+
+group3_train_acc <- lapply(group3_train, subset, values.frame_go==112 | values.frame_signal==112)
+group3_train_acc  <- lapply(group3_train_acc , droplevels)
+
+group3_means <- ldply(group3_train_acc, function(x) {c(changePC = mean(x$sc_accuracy[x$values.frame_signal==112]), goPC = mean(x$ns_accuracy[x$values.frame_go==112]))})
+
+#Subset datasets for participants who do not meet the exclusion criteria
+
+group1_include <- unique(group1_means$.id[group1_means$V1>=0.85])
+
+group2_include <- unique(group2_means$.id[group2_means$goPC>=0.85 & group2_means$stopPC>=0.65])
+
+group3_include <- unique(group3_means$.id[group3_means$goPC>=0.85 & group3_means$changePC>=0.5])
+
+```
