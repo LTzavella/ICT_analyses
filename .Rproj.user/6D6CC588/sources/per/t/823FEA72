@@ -1,0 +1,22 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1556292751768.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "2265583278",
+    "id" : "823FEA72",
+    "lastKnownWriteTime" : 1556292950,
+    "last_content_update" : 1556292950,
+    "path" : "~/Documents/GitHub/ICT/test.tex",
+    "project_path" : "test.tex",
+    "properties" : {
+        "cursorPosition" : "0,0",
+        "scrollLine" : "0"
+    },
+    "relative_order" : 5,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "tex"
+}

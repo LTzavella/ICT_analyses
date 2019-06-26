@@ -1,0 +1,23 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1555267208481.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "283033317",
+    "id" : "66618272",
+    "lastKnownWriteTime" : 1557755219,
+    "last_content_update" : 1557755219040,
+    "path" : "~/Documents/GitHub/ICT/test.Rmd",
+    "project_path" : "test.Rmd",
+    "properties" : {
+        "cursorPosition" : "82,0",
+        "scrollLine" : "60",
+        "tempName" : "Untitled1"
+    },
+    "relative_order" : 3,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_markdown"
+}

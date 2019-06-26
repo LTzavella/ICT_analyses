@@ -1,0 +1,199 @@
+---
+title             : "Does go/no-go training lead to food devaluation when indirectly measured via the affective priming paradigm? "
+shorttitle        : "GO/NO-GO TRAINING ON FOOD PRIMING EFFECTS "
+
+author: 
+  - name          : "Loukia Tzavella"
+    affiliation   : "1"
+    corresponding : yes    
+    address       : "CUBRIC, Maindy Road, Cardiff, CF24 4HQ"
+    email         : "tzavellal@cardiff.ac.uk"
+  - name          : "Christopher D Chambers"
+    affiliation   : "1"
+
+affiliation:
+  - id            : "1"
+    institution   : "Cardiff University Brain Research Imaging Centre"
+
+authornote: |
+ 
+
+#abstract: |
+  
+keywords          : "affective priming; response inhibition; go/no-go; training; devaluation;                         food liking"
+#wordcount         : "X"
+
+bibliography      : ["references.bib"]
+
+floatsintext      : yes
+figurelist        : no
+tablelist         : no
+footnotelist      : no
+linenumbers       : yes
+mask              : no
+draft             : no
+
+documentclass     : "apa6"
+classoption       : "man"
+#classoption       : "jou"
+output            : papaja::apa6_pdf
+includes:
+     after_body: "appendix.tex"
+header-includes:
+   - \usepackage{xcolor}
+   - \usepackage{multicol}
+   - \usepackage{enumitem}
+
+---
+
+```{r load_pkgs, message=FALSE, include=FALSE}
+# List of packages required for this analysis
+pkg <- c("dplyr", "ggplot2", "knitr", "bookdown", "papaja", "devtools", "kableExtra", "devtools", "BFDA")
+# Check if packages are not installed and assign the
+# names of the packages not installed to the variable new.pkg
+new.pkg <- pkg[!(pkg %in% installed.packages())]
+# If there are any packages in the list that aren't installed,
+# install them
+if (length(new.pkg))
+  install.packages(new.pkg, repos = "http://cran.rstudio.com")
+if("BFDA" %in% new.pkg) {install_github("nicebread/BFDA", subdir="package")}
+
+# Load packages 
+require(dplyr)
+require(ggplot2)
+require(knitr)
+require(bookdown)
+require(papaja)
+require(devtools)
+require(kableExtra)
+```
+
+\raggedbottom
+
+# Hypotheses {#hypotheses}
+
+In the proposed study, we will test several confirmatory hypotheses regarding the effects of go/no-go training on food evaluations. In line with previous literature [e.g., @chen_how_2016; @veling_stop_2013], we expect to find an explicit devaluation effect for foods associated with response inhibition during training (no-go). We will use two baselines, as reported in @chen_how_2016. The mean change in explicit evaluations for no-go foods will be compared to the mean change for go foods and untrained foods. The change in explicit evaluation for different training conditions (go, no-go, untrained) will be examined using difference scores (i.e., Mean post-training ratings $-$ Mean pre-training ratings, whereby a negative score indicates participants' evaluations decreased after training). The devaluation effect has not been shown in studies that utilised indirect, or 'implicit', measures of liking [@jones_inhibitory_2016]. The measure employed in these studies, however, was the Implicit Association Test [@greenwald_measuring_1998]. We will investigate whether devaluation can be observed in terms of food priming effects when the affective priming paradigm [APP; @fazio_automatic_1986-1; @hermans_affective_1994; @klauer_affective_2003] is employed as an indirect measure of (food) liking. It has been argued that a known limitation with such measures is that they rely on reaction times (RTs), which can be confounded by go/no-go training effects [i.e., RTs towards no-go stimuli can be slower after training; @chen_how_2016]. An RT priming effect is calculated using the average (mean or median) RTs for congruent and incongruent trials (see [*Affective priming*](#app)). We posit that any systematic influences on RTs would not affect the measured priming effects, as all foods will be presented in both congruent and incongruent trials. RT priming effects will be calculated using median RTs for each participant (correct responses only) and then the sample means of the difference scores (incongruent $-$ congruent) will be compared across training conditions. The study will include a manipulation check for the APP (H3), as described in [*Affective priming*](#app). All confirmatory hypotheses are outlined below.
+
+\begin{itemize}[noitemsep]
+\item[H1.] Training conditions and differences in explicit food evaluations
+\item[H1a.] The change in liking for \textit{no-go} foods will be lower than the change in liking for  \textit{go} foods. 
+\item[H1b.] The change in liking for  \textit{no-go} foods will be lower than the change in liking for \textit{untrained} foods.
+\end{itemize}
+
+\begin{itemize}[noitemsep]
+\item[H2.] Training conditions and differences in food priming effects
+\item[H2a.] The priming effect for \textit{no-go} foods will be reduced compared to the priming effect for \textit{go} foods.
+\item[H2b.] The priming effect for \textit{no-go} foods will be reduced compared to the priming effect for \textit{untrained} foods.
+\end{itemize}
+
+\begin{itemize}[noitemsep]
+\item[H3.] Manipulation check: RTs on congruent trials will be on average lower compared to RTs on incongruent non-food prime trials. 
+\end{itemize}
+
+# Methods {#methods}
+
+## Participants {#participants}
+
+Participants will be recruited via Prolific^[Through the Prolific pre-screening process, we will specify that only individuals currently residing in the UK can participate, as the foods included in the study may not be popular outside the UK.] (https://www.prolific.ac/) and personal communication^[The data collection for this study will partially be undertaken by undergraduate students from the School of Psychology, Cardiff University, who may advertise the study to individuals from the general population.]. Participants recruited via Prolific will receive £4.50 as reimbursement and we will offer a prize draw for other participants. They will be informed that 1 in 40 individuals will receive a £15 Amazon voucher. The study has been approved by the local Resarch Ethics Committee at the School of Psychology, Cardiff University. Participants will be aware of the inclusion and exclusion criteria for the study, but will also be screened for eligibility via an initial short survey. Participants will have to be at least 18 years old, speak English as their first or second language, have no major hearing impairments that would prevent them from hearing tones presented in the study and have normal or corrected-to-normal vision, including normal colour vision. Eligible participants should not have a past and/or current history of eating disorders and report that they are not currently dieting with the goal to lose weight and/or taking diet pills.  
+
+## Sampling plan {#sampling}
+
+The study will employ an open-ended Sequential Bayes Factor (SBF) design [@schonbrodt_sequential_2017] with a maximum sample size (*nmax*) of 130 and a minimum sample size (*nmin*) of 50. Data collection will continue until either the selected evidential threshold for pre-registered hypotheses has been reached, or *nmax* has been met. The grades of evidence in terms of Bayes Factor (BF) values will follow the guidelines by @lee_bayesian_2013. We will use a threshold of BF$\textsubscript{10}$ $\geq$ 10 to indicate strong evidence for the alternative hypothesis (H1) compared to the null and a threshold of BF$\textsubscript{01}$ $\geq$ 10 to reflect strong evidence for the null hypothesis (H0) compared to the alternative. The stopping rule for BF thresholds will be applied only to pre-registered hypotheses (H1, H2, H3). The data will be inspected for every 20 participants, after *nmin* has been reached, and complementary frequentist statistical tests will only be conducted after data collection has been terminated. It should be noted that only the Bayesian analyses will inform the conclusions of the study.  
+Bayes Factor Design Analysis [BFDA; @schonbrodt_bayes_2018] was performed to assess the probability of the proposed SBF design generating misleading evidence for the primary hypotheses (see Figure\ \@ref(fig:fig1)). We used the BFDA package from @schonbrodt_bfda_2018 and the code is available at https://osf.io/s6wh5/. For the planned directional Bayesian paired-samples t-tests, we examined the probabilities of simulated studies (10000) terminating at either the H1 or H0 boundary when the specified evidential threshold is reached (BF$\textsubscript{10}$ $\geq$ 10 or BF$\textsubscript{01}$ $\geq$ 10). Simulations were run for the sample sizes of 50 (*nmin*), 70, 90, 110 and 130 (*nmax*). For BFDA simulations, the design prior was the same as the proposed analysis prior ($\sqrt{2}$/2, see [*Pre-registered analyses*](#prereg_analyses)) and we considered the potential true effect sizes (Cohen's \textit{d\textsubscript{z}}) being either zero (i.e., H0 is true), _small_ (\textit{d\textsubscript{z}}=0.2), _medium_ (\textit{d\textsubscript{z}}=0.5), or _large_ (\textit{d\textsubscript{z}}=0.8). 
+
+```{r fig1, fig.cap = "Bayes Factor Design Analysis results for proposed sampling plan. ", fig.align = "center", strip.white=TRUE}
+knitr::include_graphics("figures/BFDA_plot.png", dpi = 108)
+```
+
+```{r include=FALSE}
+BFDA_results <- read.csv("BFDA_results.csv")
+```
+
+As shown in  Figure\ \@ref(fig:fig1), `r BFDA_results$Percentage[BFDA_results$X==10]`% of all simulated studies correctly terminate at the H0 boundary when *nmax* is reached and the probability of obtaining false positive evidence (FPE) is low, with only `r BFDA_results$Percentage[BFDA_results$X==5]`% of studies incorrectly terminating at the H1 boundary. At *nmax*, assuming a _small_ true effect size, only `r BFDA_results$Percentage[BFDA_results$X==15]`% of studies correctly terminate at the H1 boundary and `r BFDA_results$Percentage[BFDA_results$X==20]`% of studies incorreclty stop at H0. However, for a _medium_ efect size, results show that `r BFDA_results$Percentage[BFDA_results$X==25]`% of studies correctly terminate at H1 and no studies reach the H0 boundary at the specified evidential threshold (`r BFDA_results$Percentage[BFDA_results$X==30]`%). For an asummed _large_ true effect size, at a sample of 70, `r BFDA_results$Percentage[BFDA_results$X==32]`% of studies correctly terminate at H1.
+
+\raggedbottom
+
+## Procedure {#procedure}
+
+Participants will be screened for eligibility, provide their consent and proceed to adjusting the volume at which the tones (cues) for the go/no-go training task will be presented. An initial explicit evaluation task will be performed in order to select the most appetitive foods for the training paradigm (see [*Stimulus selection*](#selection)) and obtain pre-training liking ratings for analyses (see [*Pre-registered analyses*](#prereg_analyses)). Participants will also rate non-food stimuli and the most liked categories will be used in the non-food prime APP blocks (manipulation check; see [*Affective priming*](#app)).  The go/no-go training task will be performed first, consisting of 8 blocks and a short practice block in the beginning (see [*Go/No-Go training*](#gng)). After training completion, the affective priming paradigm and explicit evalution task will be presented in counterbalanced order across participants. Food prime (APP$\textsubscript{food}$) and non-food prime APP blocks (APP$\textsubscript{non-food}$) will be presented in the specified order: 1 APP$\textsubscript{non-food}$ - 2 APP$\textsubscript{food}$ - 1 APP$\textsubscript{non-food}$ - 2 APP$\textsubscript{food}$ - 1 APP$\textsubscript{non-food}$ - 2 APP$\textsubscript{food}$ - 1 APP$\textsubscript{non-food}$. A short practice block will also be provided for the APP. In the explicit evaluation task after training, participants will rate all foods (go, no-go, untrained) with a total of 24 trials. At the end of the study, several survey measures and questionnaires will be presented (see [*Survey measures*](#survey_measures) and [*Questionnaires*](#questionnaires)). The study will be run via Inquisit Web and has been programmed using Inquisit 5 [@inquisit_5]. 
+
+## Stimulus selection {#selection}
+
+In an initial explicit evaluation task, participants will be presented with 50 unhealthy foods^[Nutritional characteristics of the foods and related information will be presented in Supplementary Material.] in random order. They will rate the foods according to how much they like them at the time ("How much do you like this food right now?") on a visual analogue scale (VAS) ranging from -100 to 100, always centered at zero. The values on the VAS will not be visible to the participants. The foods with the highest ratings will be ranked from 1 to 24 and will be assigned to three sets of eight foods, in a manner that ensures that the average explicit liking values are as matched as possible for all sets. These stimuli sets will then randomly be selected as go, no-go or untrained foods. Each food category will be represented by two exemplars.  
+
+Following the evaluation of all foods, participants will be presented with 25 positive non-food stimuli (e.g., kittens) and will be asked to rate how much they like them ("How much do you like this image?"). The stimuli with the maximum rating will be used as primes in the non-food prime APP blocks (N=12; see [*Affective priming*](#app)). There will be two exemplars per non-food category. Stimuli for the study have been obtained from the food-pics database [@blechert_food-pics_2014-1; @blechert_food-pics_extendedimage_2019] and other sources (e.g., https://pixabay.com/).  
+
+## [Go/No-Go training]{#gng}
+
+The response inhibition training paradigm will be go/no-go training (GNG) and the task has been adapted from @chen_how_2016. In GNG, participants are either required to respond to a (food) stimulus (i.e., go trials) or inhibit their responses (i.e., no-go trials) towards it. In this task, go and no-go trials will appear with equal probability (50% no-go) and each trial will begin with the central presentation of a food stimulus, which will be followed by a cue at 100ms (see Figure\ \@ref(fig:fig2), panel A). The auditory cue will either be a 440Hz or 1000Hz tone^[In order to ensure that all participants can hear the tones properly, we will present a trial in the beginning of the study where they can adjust the volume at which the tones will be played.] presented for 300ms and will be randomly assigned to either go or no-go trials across participants. Responses on each trial will thus be determined by the assigned cue (tone). On go trials, participants will need to press the ‘B’ key using their index finger as fast as possible after cue onset and on no-go trials, they will be instructed not to respond. The food stimulus will remain on the screen for the total trial duration (i.e., 1000ms) in order to control for visual exposure time within and across participants. The inter-trial interval (ITI) will randomly vary from 800ms to 1500ms^[We have deviated from the ITIs used in Chen et al. (2016) in order to reduce the total duration of the GNG for online data collection.], in intervals of 100ms.  
+
+Each GNG block will consist of 32 trials and participants will perform 8 blocks in total (256 trials). As described in [*Stimulus selection*](#selection), randomly assigned unhealthy foods will be presented on go and no-go trials, with two exemplars for each food category. Therefore, each food category will have 16 repetitions across blocks and specific exemplars will be repeated 8 times in total. A practice block (16 trials) will be provided before the experimental blocks and accuracy feedback will be provided (i.e., "INCORRECT"). Foods that have been discarded from the stimulus selection process will be used as stimuli in practice trials. The screen background will be white and food stimuli will have relative dimensions to the participant's display resolution (40% width $\times$ 40% height).
+
+```{r fig2, fig.cap = "Schematics of the go/no-go training task and the affective priming paradigm. Note. This figure has been added for demonstration purposes and will be subject to editing for publication purposes.", fig.align = "center"}
+knitr::include_graphics("figures/fig2.png", dpi = 108)
+```
+
+## Affective priming{#app}
+
+The affective priming paradigm (APP) will involve participants performing an evaluative categorisation task, in which they have to categorise words (i.e., ‘targets’) as positive or negative, as fast and as accurately are possible, when these are preceded by food stimuli (i.e., ‘primes’). For this study, the primes will be presented supraliminally with a stimulus-onset-asynchrony (SOA) of 250 ms, as shown in Figure \@ref(fig:fig1) (panel B). All food primes will be considered positively valenced and therefore affective congruence in the APP will be defined as follows; trials in which primes are paired with a positive target are congruent and trials with negative targets are incongruent. In each trial, participants will be asked to focus on a central fixation point (1000ms) and the prime will be presented for 233ms. The prime will be masked (17ms) and the target will then stay on the screen for the maximum reaction time (maxRT) of 1500ms. The response keys “G” and “H” will be randomly assigned to positive and negative categories across participants. Participants will have to respond with the index and middle fingers of their preferred or dominant hand. A response will be considered correct if participants categorise the target correctly before maxRT is reached. RTs will be recorded from prime onset, at 1250ms, and each trial will end either when a response is registered or the total trial duration is reached (i.e., 2750ms).   
+Each APP block will consist of 48 trials and participants will complete 6 blocks in total. All food categories for each training condition will be included and represented by two exemplars, which will be randomly assigned to interleaving blocks to be paired with either positive or negative targets. For example, in block one the first exemplar of a go food category will be paired with a positive target and the second with a negative target, whereas in block two this assignment will be reversed. This will ensure that both exemplars of a food category are presented as primes in both congruent (positive target) and incongruent trials (negative target). There will be 16 go, 16 no-go and 16 untrained trials in each block. The APP will include 24 positive and 24 negative targets which have been selected based on two criteria: they have the highest valence ratings from an existing dataset (N=84; see Table\ \@ref(tab:table1)) and they can be "unambiguously" categorised [cf. @wentura_practical_2010-1]. The sets of positive and negative targets were originally selected from the EMOTE database [@gruhn_english_2016] and were matched as much possible on imagery, concreteness, familiarity, and emotionality. We will provide all target word characteristics in Supplementary Material for the final manuscript.  
+
+In addition to the critical APP blocks (APP\textsubscript{food}), we will employ a manipulation check for the task as an indirect measure of liking, which has been shown to be robust in a series of unregistered experiments (https://osf.io/m92dv/). In four blocks of 24 trials, non-food stimuli that have the highest liking rating will be used as primes and will be paired with either positive (congruent) or negative targets (incongruent). All targets will appear randomly across consecutive blocks. For non-food primes, there will be a total of 48 observations per design cell (i.e., affective congruence). The non-food prime blocks (APP\textsubscript{non-food}) will be presented in between two food prime APP blocks (see [*Procedure*](#procedure)). The screen background for the APP will be white consistent with the GNG design and all targets will be capitalised. Participants will complete 16 practice trials and the primes will be foods that have not been assigned to an experimental set during stimulus selection. Feedback will be provided for both speed and accuracy ("CORRECT"/"INCORRECT"). 
+
+## [Explicit evaluation]{#evaluation}
+
+Participants will rate all foods from the go, no-go and untrained conditions after training and food categories will be represented by the same exemplars from the initial explicit evaluation task. Food stimuli will be presented in random order. Instructions will highlight that some pictures may be the same as in the first rating task, but participants should indicate how much they like them at that specific time. Consistent with the inital rating task instructions we will provide the following example: "For instance, you may generally like a certain type of crisps but not find this particular flavour very appealing at this specific time. Also, certain images of the food may be more appealing than others." 
+
+## Questionnaires{#questionnaires}
+
+This study will be used as part of an assignment for BSc Psychology at Cardiff University and several measures have been added for the students' hypotheses and analyses. Such measures have not been described in detail in this pre-registration as they will only be subjected to exploratory analyses. All questionnaires will be completed at the end of the study in random order and they are listed below. 
+
+* Barratt Impulsiveness Scale [BIS-15; @spinella_normative_2007]
+* Food Cravings Questionnaire - Trait - reduced [FCQ-T-reduced; @meule_short_2014]
+* Perceived Stress Scale [PSS; @cohen_global_1983]
+* Big-Five Inventory [@goldberg_structure_1993; @john_big_1999] - *Neuroticism* dimension only
+* Food Choice Questionnaire [FCQ; @steptoe_development_1995] - *weight control* ,*health*, and *mood* factors only
+
+##Survey measures{#survey_measures}
+
+Several trait and state variables will be recorded for exploratory analyses. Participants will indicate their gender, ethnicity (optional), hunger levels (VAS), hours since last meal and dietary preferences (e.g., vegetarian diet). Body height and weight will be self-reported in order to caculate the participant's body-mass index (BMI; kg/m$\textsuperscript{2}$). After the short survey on demographics and trait/state variables, participants will complete a follow-up survey which will include questions about their performance in the APP (e.g., strategic responding), attention/instruction manipulation checks [@kees_analysis_2017-1] and questions on interruptions during the study [@waters_evaluating_2008-1]. All survey measures can be found in Supplementary Material 1. 
+
+# Analyses
+
+##Measures & Indices{#indices}
+
+In this pre-registration we have only described measures and indices that will be necessary for confirmatory analyses and any other variables, such as speed and accuracy in the GNG, have not been included. For the APP, we will obtain the median RTs for each participant from the condition of interest (e.g., congruent go food trials) and only correct trials will be considered. Medians are preferred instead of means as they are less sensitive to outliers and will indicate central tendency more accurately in the expected positively-skewed RT distributions. Priming effects will be calculated as the change in RTs from incongruent to congruent trials (medianRT$\textsubscript{inc}$ $-$ medianRT$\textsubscript{con}$). The sample means will then be compared across conditions and are referred to as $\Delta$RT. For the explicit evaluations, we will obtain the mean ratings of the three training conditions (go, no-go, untrained) for each participant pre- and post- training. Difference scores will then be calculated for each training condition (i.e., $\Delta$Liking$\textsubscript{go}$, $\Delta$Liking$\textsubscript{nogo}$, $\Delta$Liking$\textsubscript{untrained}$).
+
+##Pre-registered analyses{#prereg_analyses}
+Data pre-processing and analyses will be conducted using RStudio [@rstudio] and all scripts will be shared on the OSF project, available at https://osf.io/6bsnv/. All confirmatory hypotheses will be tested using directional Bayesian paired-samples t-tests [@rouder_ttest], as listed below.  We will have a set prior with the $\sqrt{2}$/2 scale parameter for the half-Cauchy distribution. We will test for the normality assumption and if it is not met we will report additional analyses with log-transformed values in a supplementary manner.
+
+H1a. $\Delta$Liking$\textsubscript{nogo}$ < $\Delta$Liking$\textsubscript{go}$  
+H1b. $\Delta$Liking$\textsubscript{nogo}$ < $\Delta$Liking$\textsubscript{untrained}$   
+
+H2a. $\Delta$RT$\textsubscript{nogo}$ < $\Delta$RT$\textsubscript{go}$  
+H2b. $\Delta$RT$\textsubscript{nogo}$ < $\Delta$RT$\textsubscript{untrained}$
+
+H3. RT$\textsubscript{con}$ < RT$\textsubscript{inc}$ (non-food prime trials) 
+
+##Data exclusions
+
+Error rates will be inspected for both the GNG and APP. Participants with error rates greater or equal to 0.4 from within either the set of critical food prime or non-food prime trials will be excluded from all respective analyses. For the GNG, we will exclude participants who have a proportion of successful inhibitions (i.e., correct no-go responses) lower than 0.65 [see @jones_inhibitory_2016, Section 3.3 on proportion of successful inhibitions and training effect size]. Participants who did not complete all the tasks/measures of the study critical to confirmatory hypotheses (GNG, APP, explicit evaluation task) will not be included in pre-registered analyses. Participants who did not complete the survey measures and questionnaires at the study will not be excluded. Further potential data exclusions will be implemented based on the timing of events in APP trials. In online data collection settings, we may observe certain timing delays due to varying technical specifications (e.g., screen refresh rate). We will discard APP trials in which the duration of the prime (233ms) and mask (17ms) is delayed by two or more refresh rates (at 17ms). Participants with more than 25% discarded trials will be excluded from all analyses. 
+
+\newpage
+
+```{r render_appendix, include=FALSE}
+render_appendix("appendix.Rmd")
+```
+
+\include{Appendix}
+
+# References
+
+
+\begingroup
+\setlength{\parindent}{-0.5in}
+\setlength{\leftskip}{0.5in}
+
+<div id = "refs"></div>
+\endgroup
+
