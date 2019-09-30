@@ -1,0 +1,820 @@
+---
+title: "ICT_analyses"
+output: html_document
+---
+
+# R environment & data files
+
+## Required packages
+
+```{r message=FALSE}
+required.packages <- c("BayesFactor", "nlme", "plyr", "here", "data.table", "reshape2", "lme4", "dplyr","ggplot2", "ggpubr")
+
+new.packages <- required.packages[!(required.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)>0) {install.packages(new.packages)}
+
+require(BayesFactor)
+require(nlme)
+require(plyr)
+require(here)
+require(data.table)
+require(reshape2)
+require(lme4)
+require(dplyr)
+require(ggplot2)
+require(ggpubr)
+```
+
+## Import data files
+
+* All raw data files can be downloaded from the OSF project 'ICT_data' component, available at https://osf.io/9cu64/. Raw data are saved in the 'raw_data.zip'.
+
+* After you have downloaded all files as a zip folder, you can extract this in the 'data' folder for this R project directory. 
+
+* Please note that the csv files are large (10-11 MB) and certain pre-processing steps may take a few minutes to finish. 
+
+* A summary file with the participants' demographics has not been shared as some variables (in combination) may be considered _indirect_ personal identifiers.
+
+* I have manually removed the data files from excluded participants based on the following criteria: 
+  - psychiatric/neurological disorders
+  - binge eating disorder 
+  - drug and/or alcohol abuse
+  
+```{r}
+#Save names from complete data files in the 'data' folder 
+files <- list.files(here("data"), all.files = TRUE, full.names = FALSE, no.. = TRUE, pattern = "\\.csv$")
+
+#Make a list of all data files
+data <- lapply(here("data", files), function(x) {fread(x)})
+
+#Change structure of files into data frames
+data <- lapply(data, function(x) as.data.frame(x))
+
+#Assign names to the list elements (subject IDs)
+subs <- lapply(data, function(x) head(x$ID, n=1))
+subs <- lapply(subs, function(x) as.character(x))
+names(data) <- subs
+```
+
+## Load script with functions
+
+```{r}
+source("ICT_functions.R")
+```
+
+# Data pre-processing 
+
+## Data transformations
+
+* Data were collected in both laboratory and online settings and therefore mouse coordinates correspond to different display resolutions. 
+
+* For this reason, x-y coordinates will be transformed into a standardised space compatible with the aspect ratio used for the experimental task window (2 x 1.5).
+
+* For mouse-tracking analyses, the x-axis should be mapped as [-1, 1] but we prefer to avoid negative values for our calculations and therefore use the [0, 2].
+
+* This transformation will only be applied to data from the training task and go tests. 
+
+* Mouse coordinates from the explicit evaluation task (EET) will undergo a different transformation.
+
+```{r}
+#For the following pre-processing steps, we only use the training and go test data. 
+#Therefore we create a copy of the 'data' list and name it 'ICT_data' from which only the relevant blockcodes are used.
+
+ICT_data <- lapply(data, subset, block!="tastiness" & block!="desiretoeat" & block!="dummy_taste" & block!="dummy_des")
+
+ICT_data <- lapply(ICT_data, transform, mousex = ifelse(mousex<0, 0, ifelse(mousex>canvas_width, canvas_width, mousex)))
+
+
+#Apply 'transform_xy' function to ICT_data
+
+ICT_data <- lapply(ICT_data, function(x) transform_xy(min_x = 0, max_x = as.numeric(x$canvas_width), min_y = 0, max_y = as.numeric(x$canvas_height), x = x$mousex, y = x$mousey, data= x))
+```
+
+## Trial-to-trial mouse movements
+
+* Information about trial-to-trial mouse movements is obtained, such as previous and next x-y coordinates and the euclidean distance travelled with the mouse from one trial to another (movedXY)
+
+* Reaction times are also recorded on following trials, i.e., rt_sample1: RT before two samples and rt_sample2: RT before eleven samples - these will be necessary for registering RT measures (e.g., SSRT)
+
+* Stopping of the mouse is registered when for 3 or more samples there is no change in mouse coordinates including the pixel tolerance which was set as 20px to account for natural movements of the mouse.
+
+* Stopping for stop-signal trials is registered when for 12 or more samples there is no change in mouse coordinates including the tolerance for natural mouse movements. 
+
+* For RT measures, the first sample of these observations is used as the time-point of interest. 
+
+* It should be noted that change in x-y coordinates was not properly defined. It is crucial to use the euclidean distance to take into account movements in both x and y axes. 
+
+* Importantly, the pixel tolerance of 20px cannot be translated into the transformed x-y coordinates and should not be generalised to different display resolutions (if coordinates were not transformed).
+
+* For that reason, we set a minimum tolerance of 0.01 for movements in the standardised coordinate space. 
+
+```{r}
+#Apply 'movements' function to ICT_data to obtain the following measures:
+
+#previous & next x-y coordinates
+#movedXY:   Euclidean distance covered with the mouse on a frame-by-frame basis
+#rtample1:  reaction time before two samples (frames)
+#rtsample2: reaction time before eleven samples 
+
+ICT_data <- lapply(ICT_data, function(x) movements(x$newx, x$newy, x$total_rt,  x))
+
+#Record when stopping occurs including the tolerance of 0.01
+ICT_data <- lapply(ICT_data, transform, stopping = ifelse(movedXY <=0.01, 1, 0))
+
+#For accuracy and RTs in no-signal trials we only record stopping when the target has been reached
+ICT_data <- lapply(ICT_data, transform, go_stop = ifelse(movedXY <=0.01 & target_reached>0, 1, 0))
+
+#Remove NAs from the vector to avoid errors in applying the function below
+ICT_data <- lapply(ICT_data, transform, stopping = ifelse(is.na(stopping), 0, stopping))
+
+#Every time stopping occurs we start recording samples (1, 2, 3, ..), which are reset to 0 when stopping is no longer observed 
+ICT_data <- lapply(ICT_data, transform, sample = ave(stopping, cumsum(stopping==0), FUN=cumsum))
+
+ICT_data <- lapply(ICT_data, transform, go_sample = ave(go_stop, cumsum(target_reached==0), FUN=cumsum))
+```
+
+## Recode accuracy for no-signal trials
+
+* The code for the experiment did not account for certain responses (e.g., participants reaching both target and non-target) 
+
+* We create another variable for accuracy (ns_accuracy) to record all possible responses:
+
+  -  ns_accuracy==1: correct target was reached on time
+  -  ns_accuracy==2: wrong target was reached on time
+  -  ns_accuracy==3: participants did not respond on time
+  -  ns_accuracy==4: both target and non-target stimuli were reached on time
+  
+```{r}
+#We save accuracy values on the last trial frame (i.e., values.frame_go==112)
+ICT_data <- lapply(ICT_data, transform, ns_accuracy = ifelse(target_reached>0 & nontarget_reached==0 & frame_go==106, 1,                   
+                                                      ifelse(target_reached==0 & nontarget_reached>0 & frame_go==106, 2, 
+                                                      ifelse(target_reached==0 & nontarget_reached==0 & frame_go==106, 3,
+                                                      ifelse(target_reached>0 & nontarget_reached>0 & frame_go==106, 4, 0)))))
+```
+
+## Split data into groups
+
+> Group 1 = Go (control)
+  Group 2 = Stop
+  Group 3 = Stop-change
+
+```{r}
+#Split list of dataframes into groups and get training data
+
+group1 <- ICT_data[sapply(ICT_data, function(x) all(x$group == 1))]
+group2 <- ICT_data[sapply(ICT_data, function(x) all(x$group == 2))]
+group3 <- ICT_data[sapply(ICT_data, function(x) all(x$group == 3))]
+
+#Remove columns that we don't need for confirmatory analyses
+
+group1 <- lapply(group1, subset, select=c(1:8, 25:26, 30:34, 36:39, 40:45, 51, 59:66))
+group2 <- lapply(group2, subset, select=c(1:8, 25:26, 30:34, 36:39, 40:45, 51, 59:66))
+group3 <- lapply(group3, subset, select=c(1:8, 25:26, 30:34, 36:39, 40:45, 51, 59:66))
+
+group1_train <- lapply(group1, subset, block=="go_training")
+group2_train <- lapply(group2, subset, block=="stop_training")
+group3_train <- lapply(group3, subset, block=="change_training")
+```
+
+> Registration of GoRTs
+
+* GoRTs need to be defined according to the new stopping registration we employed with transformed x-y coordinates.
+
+* We will select the first sample out of three in which stopping occured for a CORRECT response.
+
+* In some cases, stopping can be observed more than once during the trial. For this reason, we record the trialcode values of preceding rows and select the first stopping occurence. 
+
+## Data exclusions for GO group 
+
+* Proportion of correct responses in go trials < 85%
+* Mean GoRT in go trials >= 3 SDs from training group mean 
+
+```{r}
+#Keep trials where stopping occured and the last frames of no-signal and signal trials (both go trials in the GO group)
+group1_train <- lapply(group1_train, subset, (go_sample==3 & trial!="mask" & go_stop==1) | frame_go==106 | frame_signal==106)
+
+#Register accuracy for all trials
+group1_train <- lapply(group1_train, transform, ns_accuracy = ifelse(target_reached>0 & nontarget_reached==0 & frame_signal==106, 1, 
+                    ifelse(target_reached==0 & nontarget_reached>0 & frame_signal==106, 2, 
+                    ifelse(target_reached==0 & nontarget_reached==0 & frame_signal==106, 3,
+                    ifelse(target_reached>0 & nontarget_reached>0 & frame_signal==106, 4, ns_accuracy)))))
+
+#Record preceding trial and register GoRTs at the last samples (frame_go or frame_signal = 106)
+group1_train <- lapply(group1_train, transform, lag_trial = as.character(lag(trial, 1)))
+
+group1_train <- lapply(group1_train, transform, GoRT = if_else(frame_go==106 & (lag_trial=="ns_left"|lag_trial=="ns_right"),lag(rt_sample1, 1), if_else(frame_signal==106 & (lag_trial=="gs_left"|lag_trial=="gs_right"),lag(rt_sample1, 1), 0)))
+        
+group1_train <- lapply(group1_train, subset, frame_go==106 | frame_signal==106)
+
+#Change NAs into 0s
+group1_train <- lapply(group1_train, transform, GoRT = if_else(is.na(GoRT), 0, GoRT))
+
+#Recode accuracy for mean calculation
+group1_train <- lapply(group1_train, transform, accuracy=as.numeric(ifelse(ns_accuracy==1, "1", "0")))
+
+# Get mean proportions of correct responses 
+group1_means <- ldply(group1_train, function(x) c(goPC= mean(x$accuracy), goRT = mean(x$GoRT[x$accuracy==1])))
+
+#Exclude participants with a proportion of correct responses less than 0.85
+group1_means <- subset(group1_means, goPC>=0.85)
+
+#Calculate max based on >3 SDs from group mean
+group1_max = mean(group1_means$goRT) + (3 * sd(group1_means$goRT))
+```
+
+## Data exclusions for STOP group
+
+* Proportion of correct responses in go trials < 85%
+* Proportion of correct responses in stop trials < 65% 
+* Mean GoRT in go trials < 3 SDs from training group mean 
+* Mean SSRT in stop trials < 2 SDs from the training group mean
+
+```{r}
+#Register the RT when the signal-onset distance was reached (i.e., signal onset time). 
+group2_train <- lapply(group2_train, transform, signalonset = ifelse(trial=="inter_ss_left"|trial=="inter_ss_right", lead(total_rt, 1)-latency, 0))
+
+#Subset data to keep only relevant trials.
+group2_train <- lapply(group2_train, subset, (sample==12 & (trial=="post_ss_left" | trial=="post_ss_right")) | frame_go==106 | frame_signal==106 | (go_sample==3 & (trial=="ns_left"|trial=="ns_right") & go_stop==1) | (trial=="inter_ss_left"|trial=="inter_ss_right"))
+
+# Create variable 'signal' with two levels: ns and ss for no-signal and stop-signal trials respectively
+group2_train <- lapply(group2_train, transform, signal = as.factor(if_else(frame_go>0, "ns", "ss")))
+
+# Before we code accuracy for signal trials we need to create a new variable for the side of the screen on which the mouse was when stopping occured
+group2_train <- lapply(group2_train, transform, side = as.factor(if_else(newx<0.9, "left", if_else(newx>1.1, "right", "middle"))))
+
+# Create a lag trial
+group2_train <- lapply(group2_train, transform, lag_trial = as.character(lag(trial, 1)))
+
+# Direction coding
+group2_train <- lapply(group2_train, transform,
+  direction = as.factor(if_else((trial=="post_ss_left"|trial=="inter_ss_left") & side != "right", "correct",
+    if_else((trial=="post_ss_right"|trial=="inter_ss_right") & side != "left", "correct", if_else(trial == "ns_left" | trial == "ns_right", "nan", "incorrect")))))
+
+# Based on previous trials, we need to categorise the number of stops that occur after signal onset and before the target is reached. 
+
+group2_train <- lapply(group2_train, transform, stop_trial = as.numeric(if_else(trial=="post_ss_left"|trial=="post_ss_right", "1", "0")))
+
+group2_train <- lapply(group2_train, transform, stop_sample = ave(stop_trial, cumsum(stop_trial==0), FUN=cumsum))
+
+# Register GoRTs and accuracy
+
+group2_train <- lapply(group2_train, transform, GoRT = if_else(frame_go==106 & (lag_trial=="ns_left"|lag_trial=="ns_right"),lag(rt_sample1, 1), 0))
+
+group2_train <- lapply(group2_train, transform, lead_trial = as.character(lead(trial, 1)))
+
+group2_train <- lapply(group2_train, transform, 
+                       ss_accuracy = ifelse(target_reached==0 & nontarget_reached==0  & direction=="correct" & sample>=12, 1, 0))
+
+#Select only first point of stopping that was observed (stop_sample = 1)
+group2_train <- lapply(group2_train, subset, (trial=="inter_ss_left"|trial=="inter_ss_right") | lead(frame_signal,1)==106  | frame_signal==106 | frame_go==106)
+
+group2_train <- lapply(group2_train, transform, ss_accuracy = ifelse(frame_signal=="106", lag(ss_accuracy,1), ss_accuracy))
+
+group2_train <- lapply(group2_train, transform, signalonset = if_else(trial=="post_ss_left"|trial=="post_ss_right", lag(signalonset, 1), signalonset))
+
+group2_train <- lapply(group2_train, transform, signalonset = if_else(frame_signal==106 & (lag_trial=="post_ss_left"|lag_trial=="post_ss_right"), lag(signalonset, 1), signalonset))
+
+group2_train <- lapply(group2_train, transform, stopRT = if_else(stop_sample>=1 & frame_signal!=106, rt_sample2, 0))
+
+group2_train <- lapply(group2_train, transform, SSRT = rt_sample2 - signalonset)
+group2_train <- lapply(group2_train, transform, SSRT = if_else(frame_signal==106, lag(SSRT, 1), if_else(stop_sample==1, SSRT, 0)))
+
+#Group 2 descriptives for exclusions
+
+group2_train <- lapply(group2_train, subset, frame_go==106 |frame_signal==106)
+group2_train <- lapply(group2_train, transform, GoRT = if_else(is.na(GoRT), 0, GoRT))
+group2_train <- lapply(group2_train, transform, SSRT = if_else(is.na(SSRT), 0, SSRT))
+
+group2_train <- lapply(group2_train, transform, ns_accuracy=as.numeric(ifelse(ns_accuracy==1, "1", "0")))
+group2_train <- lapply(group2_train, transform, ss_accuracy=as.numeric(ifelse(ss_accuracy==1, "1", "0")))
+
+group2_means <- ldply(group2_train, function(x) c(goPC= mean(x$ns_accuracy[x$signal=="ns"]), stopPC = mean(x$ss_accuracy[x$signal=="ss"]),
+                                                  goRT = mean(x$GoRT[x$signal=="ns" & x$ns_accuracy==1]), SSRT = mean(x$SSRT[x$signal=="ss" & x$ss_accuracy==1])))
+
+# Note that accuracy-based exclusions are applied first and then RT-related criteria are checked.
+group2_incl_pc_ns <- unique(group2_means$.id[group2_means$goPC>=0.85])
+
+group2_max_ns = mean(group2_means$goRT) + (3 * sd(group2_means$goRT))
+
+group2_incl_rts_ns <- unique(group2_means$.id[group2_means$goRT<group2_max_ns])
+
+group2_means <- subset(group2_means, .id %in% group2_incl_pc_ns)
+
+group2_incl_pc_ss <- unique(group2_means$.id[group2_means$stopPC>=0.65])
+
+group2_means <- subset(group2_means, .id %in% group2_incl_pc_ss)
+
+group2_max_ss = mean(group2_means$SSRT) + (2 * sd(group2_means$SSRT))
+
+group2_incl_rts_ss <- unique(group2_means$.id[group2_means$SSRT<group2_max_ss])
+```
+
+## Data exclusions for CHANGE group
+
+* Proportion of correct responses in go trials < 85%
+* Proportion of correct responses in stop-change trials < 50% 
+* Mean GoRT in go trials < 3 SDs from training group mean 
+* Mean CSRT in stop-change trials < 3 SDs from training group mean
+
+```{r}
+#Register the RT when the signal-onset distance was reached (i.e., signal onset time). 
+group3_train <- lapply(group3_train, transform, signalonset = ifelse(trial=="inter_cs_left"|trial=="inter_cs_right", lead(total_rt, 1)-latency, 0))
+
+#Subset data to keep only relevant trials.
+group3_train <- lapply(group3_train, subset, (change==1 & (trial=="post_cs_left" | trial=="post_cs_right")) | frame_go==106 | frame_signal==106 | (go_sample==3 & (trial=="ns_left"|trial=="ns_right") & go_stop==1) | (trial=="inter_cs_left"|trial=="inter_cs_right"))
+
+#Record change samples
+group3_train <- lapply(group3_train, transform, change= as.numeric(ifelse(frame_signal==106, "0", change)))
+
+group3_train <- lapply(group3_train, transform, change_sample = ave(change, cumsum(change==0), FUN=cumsum))
+
+group3_train <- lapply(group3_train, subset, change_sample=="3" | (go_sample==3 & (trial=="ns_left"|trial=="ns_right") & go_stop==1) | (trial=="inter_cs_left"|trial=="inter_cs_right") | frame_go==106 | frame_signal==106)
+
+#Create variable 'signal' with two levels: ns and ss for no-signal and change-signal trials respectively
+group3_train <- lapply(group3_train, transform, signal = as.factor(if_else(frame_go>0, "ns", "ss")))
+
+#Calculate the change-signal reaction time (CSRT)
+group3_train <- lapply(group3_train, transform, lag_trial = as.character(lag(trial, 1)))
+
+group3_train <- lapply(group3_train, transform, CSRT = if_else(frame_signal==106 & (lag_trial=="post_cs_left"|lag_trial=="post_cs_right"), lag(rt_sample1, 1), 0))
+
+group3_train <- lapply(group3_train, transform, signalonset = if_else((trial=="post_cs_left"|trial=="post_cs_right"), lag(signalonset, 1), signalonset))
+
+group3_train <- lapply(group3_train, transform, signalonset = if_else((lag_trial=="post_cs_left"|lag_trial=="post_cs_right"), lag(signalonset, 1), signalonset))
+
+group3_train <- lapply(group3_train, transform, CSRT = as.numeric(CSRT - signalonset))
+
+#Define accuracy for change-signal trials
+group3_train <- lapply(group3_train, transform, sc_accuracy = if_else(frame_signal==106 & target_reached==0 & nontarget_reached>0 & correct_direction1==1, 1, 0))
+
+#Get GoRTs from no-signal trials
+group3_train <- lapply(group3_train, transform, GoRT = if_else(frame_go==106 & (lag_trial=="ns_left"|lag_trial=="ns_right"), lag(rt_sample1, 1), 0))
+
+#Group 3 descriptives for exclusions
+
+group3_train <- lapply(group3_train, subset, frame_go==106 |frame_signal==106)
+group3_train <- lapply(group3_train, transform, GoRT = if_else(is.na(GoRT), 0, GoRT))
+group3_train <- lapply(group3_train, transform, CSRT = if_else(is.na(CSRT), 0, CSRT))
+
+group3_train <- lapply(group3_train, transform, ns_accuracy=as.numeric(ifelse(ns_accuracy==1, "1", "0")))
+group3_train <- lapply(group3_train, transform, sc_accuracy=as.numeric(ifelse(sc_accuracy==1, "1", "0")))
+
+group3_means <- ldply(group3_train, function(x) c(goPC= mean(x$ns_accuracy[x$signal=="ns"]), changePC = mean(x$sc_acc[x$signal=="ss"]),
+                                                  goRT = mean(x$GoRT[x$signal=="ns" & x$ns_accuracy==1]), CSRT = mean(x$CSRT[x$signal=="ss" & x$sc_accuracy==1])))
+
+#Subset datasets for participants who do not meet the exclusion criteria
+group3_incl_pc_ns <- unique(group3_means$.id[group3_means$goPC>=0.85])
+
+group3_max_ns = mean(group3_means$goRT) + (3 * sd(group3_means$goRT))
+
+group3_means <- subset(group3_means, .id %in% group3_incl_pc_ns)
+
+group3_incl_pc_ss <- unique(group3_means$.id[group3_means$changePC>=0.50])
+
+group3_means <- subset(group3_means, .id %in% group3_incl_pc_ss)
+
+group3_max_ss = mean(group3_means$CSRT) + (3 * sd(group3_means$CSRT))
+
+group3_incl_rts_ns <- unique(group3_means$.id[group3_means$goRT<group3_max_ns])
+group3_incl_rts_ss <- unique(group3_means$.id[group3_means$CSRT<group3_max_ss])
+```
+
+## Apply exclusions to all data
+
+```{r}
+group1_include <- unique(group1_means$.id[group1_means$goRT < group1_max])
+
+group2_include <- unique(group2_means$.id[group2_means$goRT<group2_max_ns & group2_means$SSRT<group2_max_ss])
+
+group3_include <- unique(group3_means$.id[group3_means$goRT<group3_max_ns & group3_means$CSRT<group3_max_ss])
+
+#Clear datasets 
+
+group1 <- group1[sapply(group1, function(x) any(x$ID %in% group1_include))]
+group2 <- group2[sapply(group2, function(x) any(x$ID %in% group2_include))]
+group3 <- group3[sapply(group3, function(x) any(x$ID %in% group3_include))]
+
+group1_train <- group1_train[sapply(group1_train, function(x) any(x$ID %in% group1_include))]
+group2_train <- group2_train[sapply(group2_train, function(x) any(x$ID %in% group2_include))]
+group3_train <- group3_train[sapply(group3_train, function(x) any(x$ID %in% group3_include))]
+
+groups_include <- c(group1_include, group2_include, group3_include)
+
+ICT_data <- ICT_data[sapply(ICT_data, function(x) any(x$ID %in% groups_include))]
+data <- data[sapply(data, function(x) any(x$ID %in% groups_include))]
+```
+
+## Evaluation task data
+
+```{r}
+#Record minimum and maximum y coordinates based on the task (canvas) window
+data <- lapply(data, transform, y_min = ((canvas_height * 0.07) - (canvas_height * 0.04)/2))
+data <- lapply(data, transform, y_max = ((canvas_height * 0.07) + (canvas_height * 0.04)/2))
+
+#Register stopping on EET trials (>= 3 samples)
+data <- lapply(data, transform, prevx = lag(mousex, 1))
+data <- lapply(data, transform, prevy = lag(mousey, 1))
+
+data <- lapply(data, transform, stopping = if_else(mousex==prevx & mousey==prevy, 1, 0))
+
+data <- lapply(data, subset, trial!="post_practice")
+
+data <- lapply(data, transform, sample = ave(as.numeric(stopping), cumsum(stopping==0), FUN=cumsum))
+data <- lapply(data, transform, eval_stop = if_else(sample==3 & init_time > 0 & (block=="desiretoeat"|block=="tastiness"), 2, 0))
+
+#Code accuracy of coordinates- i.e., if they are in the accepted range for VAS or not
+data <- lapply(data, transform, cor_xy = if_else(mousey>=y_min & mousey <= y_max & mousex>=min_eval & mousex <= max_eval, 1, 0))
+
+#Two participants were found to respond on EET trials by simply moving their mouse to the VAS and waiting for the next trial. Since they did not click on the VAS for their responses to be registered, I have manually coded when the mouse cursor was within the acceptable VAS x-y coordinates and they stopped moving their mouse for at least 3 samples
+
+data$`283948702_2_14_57_20`$marker = ifelse(data$`283948702_2_14_57_20`$eval_stop==2 & data$`283948702_2_14_57_20`$cor_xy==1, 2, 0)
+
+data$`701639649_2_15_07_36`$marker = ifelse(data$`701639649_2_15_07_36`$eval_stop==2 & data$`701639649_2_15_07_36`$cor_xy==1, 2, 0)
+  
+#Subset all data to only include completed EET responses
+des <- lapply(data, subset, block=="desiretoeat" & marker==2)
+tas <- lapply(data, subset, block=="tastiness" & marker==2)
+
+#A few participants in the beginning of data collection had duplicate jpgs appearing (extra trials) due to an error in the experimental scripts. This issue is corrected by removing the duplicates.
+des <- lapply(des, function(x) rm_d(x))
+tas <- lapply(tas, function(x) rm_d(x))
+
+#Coordinate log transformation for EET responses
+
+des$`283948702_2_14_57_20`$markerx <- des$`283948702_2_14_57_20`$mousex
+tas$`283948702_2_14_57_20`$markerx <- tas$`283948702_2_14_57_20`$mousex
+
+des$`701639649_2_15_07_36`$markerx <- des$`701639649_2_15_07_36`$mousex
+tas$`701639649_2_15_07_36`$markerx <- tas$`701639649_2_15_07_36`$mousex
+
+des <- lapply(des, function(x) transform_x(x$min_eval, x$max_eval, x$markerx, x))
+tas <- lapply(tas, function(x) transform_x(x$min_eval, x$max_eval, x$markerx, x))
+
+#Change the names and structure of variables to be included in later analyses
+tas <- lapply(tas, transform, healthiness = as.factor(eval_healthiness))
+tas <- lapply(tas, transform, novelty = as.factor(eval_novelty))
+tas <- lapply(tas, transform, selection = as.factor(eval_selection))
+tas <- lapply(tas, transform, item = as.factor(eval_jpg))
+
+des <- lapply(des, transform, healthiness = as.factor(eval_healthiness))
+des <- lapply(des, transform, novelty = as.factor(eval_novelty))
+des <- lapply(des, transform, selection = as.factor(eval_selection))
+des <- lapply(des, transform, item = as.factor(eval_jpg))
+
+#Important: The side on which the positive/negative anchors of the VAS appeared was randomised across participants and therefore coordinates need to remapped so that for all participants the positive end would be on the right side.
+tas <- lapply(tas, function(x) cbind(x, xcoord=ifelse(x$eval_side==2, abs(x$newx-100), x$newx)))
+des <- lapply(des, function(x) cbind(x, xcoord=ifelse(x$eval_side==2, abs(x$newx-100), x$newx)))
+
+#Split datasets according to healthiness 
+tas_h <- lapply(tas, subset, healthiness==1)
+tas_u <- lapply(tas, subset, healthiness==2)
+
+des_h <- lapply(des, subset, healthiness==1)
+des_u <- lapply(des, subset, healthiness==2)
+
+#Mean ratings for EET data (for each design cell)
+tas_us <- ldply(tas_u, eval)
+tas_hs <- ldply(tas_h, eval)
+
+des_us <- ldply(des_u, eval)
+des_hs <- ldply(des_h, eval)
+
+
+#Files for JASP
+tas_u_stop <- subset(tas_us, Group!=3)
+tas_h_stop <- subset(tas_hs, Group!=3)
+
+des_u_stop <- subset(des_us, Group!=3)
+des_h_stop <- subset(des_hs, Group!=3)
+
+tas_u_change <- subset(tas_us, Group!=2)
+tas_h_change <- subset(tas_hs, Group!=2)
+
+des_u_change <- subset(des_us, Group!=2)
+des_h_change <- subset(des_hs, Group!=2)
+
+write.csv(tas_u_stop, file=here("JASP", "tas_u_stop.csv"), row.names = FALSE)
+write.csv(tas_h_stop, file=here("JASP", "tas_h_stop.csv"), row.names = FALSE)
+write.csv(des_u_stop, file=here("JASP", "des_u_stop.csv"), row.names = FALSE)
+write.csv(des_h_stop, file=here("JASP", "des_h_stop.csv"), row.names = FALSE)
+
+write.csv(tas_u_change, file=here("JASP", "tas_u_change.csv"), row.names = FALSE)
+write.csv(tas_h_change, file=here("JASP", "tas_h_change.csv"), row.names = FALSE)
+write.csv(des_u_change, file=here("JASP", "des_u_change.csv"), row.names = FALSE)
+write.csv(des_h_change, file=here("JASP", "des_h_change.csv"), row.names = FALSE)
+
+#Dataframes for model comparisons (BayesFactor package)
+tas_h <- ldply(tas_h, as.data.frame)
+tas_u <- ldply(tas_u, as.data.frame)
+
+des_h <- ldply(des_h, as.data.frame)
+des_u <- ldply(des_u, as.data.frame)
+
+tas_h$ID <- droplevels(as.factor(tas_h$ID))
+tas_u$ID <- droplevels(as.factor(tas_u$ID))
+
+des_h$ID <- droplevels(as.factor(des_h$ID))
+des_u$ID <- droplevels(as.factor(des_u$ID))
+
+tas_u$group <- as.factor(tas_u$group)
+tas_h$group <- as.factor(tas_h$group)
+
+des_u$group <- as.factor(des_u$group)
+des_h$group <- as.factor(des_h$group)
+
+#Export data files for OSF
+write.csv(tas_h, file=here("OSF_data", "tas_h.csv"), row.names = FALSE)
+write.csv(tas_u, file=here("OSF_data", "tas_u.csv"), row.names = FALSE)
+
+write.csv(des_h, file=here("OSF_data", "des_h.csv"), row.names = FALSE)
+write.csv(des_u, file=here("OSF_data", "des_u.csv"), row.names = FALSE)
+```
+
+## Go test data
+
+```{r}
+#We need to get difference scores for goRT (post-pre) from mean GoRTs
+go_test <- lapply(ICT_data, subset, block=="go_test" | block=="go_test_end")
+
+go_test <- lapply(go_test, subset, (go_sample==3 & trial!="mask" & go_stop==1) | frame_go==106)
+
+go_test <- lapply(go_test, transform, lag_trial = as.character(lag(trial, 1)))
+
+go_test<- lapply(go_test, transform, GoRT = if_else(frame_go==106 & (lag_trial=="ns_left"|lag_trial=="ns_right"),lag(rt_sample1, 1), 0))
+        
+go_test <- lapply(go_test, subset, frame_go==106)
+
+go_test <- lapply(go_test, transform, GoRT = if_else(is.na(GoRT), 0, GoRT))
+
+#Recode accuracy for mean calculation
+go_test <- lapply(go_test, transform, accuracy=as.numeric(ifelse(ns_accuracy==1, "1", "0")))
+
+#For GoRTs we only consider correct trials
+go_test_cor <- lapply(go_test, subset, accuracy==1)
+
+#Apply function for mean GoRTs
+go_sum <- ldply(go_test_cor, go_RTs)
+go_sum$Group <- as.factor(go_sum$Group)
+
+#Difference scores for pre-post mean GoRTs 
+
+#DGoRT_U: DGoRT for unhealthy foods
+#DGoRT_H: DGoRT for healthy foods
+#DGoRT_SU: DGoRT for selected unhealthy foods
+#DGoRT_NU: DGoRT for non-selected unhealthy foods
+
+go_sum$DGoRT_U = go_sum$GoRT.U.Post - go_sum$GoRT.U.Pre
+go_sum$DGoRT_H = go_sum$GoRT.H.Post - go_sum$GoRT.H.Pre
+
+go_sum$DGoRT_SU = go_sum$GoRT.SU.Post - go_sum$GoRT.SU.Pre
+go_sum$DGoRT_NU = go_sum$GoRT.NU.Post - go_sum$GoRT.NU.Pre
+
+#Data files for JASP
+go_sum_stopgo <- subset(go_sum, Group!="3")
+go_sum_changego <- subset(go_sum, Group!="2")
+
+
+write.csv(go_sum_stopgo, file=here("JASP", "go_sum_stopgo.csv"), row.names = FALSE)
+write.csv(go_sum_changego, file=here("JASP", "go_sum_changego.csv"), row.names = FALSE)
+```
+
+# Linear mixed-effects models
+
+> Abbreviations for model selection
+
+BTU1 - Bayesian, tastiness ratings, unhealthy foods, model 1
+BTU2 - Bayesian, tastiness ratings, unhealthy foods, model 2 [...]  
+
+BDU1 - Bayesian, desire to eat ratings, unhealthy foods, model 1
+BTH1 - Bayesian, tastiness ratings, healthy foods, model 1
+BDH1 - Bayesian, desire to eat ratings, healthy foods, model 1
+
+Frequentist equivalents:
+
+FTU1, FDU1
+FTH1, FDH1
+
+## Bayesian LMMs
+
+```{r}
+#Tastiness ratings - unhealthy foods
+BTU1 <- lmBF(data=tas_u, xcoord ~ group * selection * novelty +  + item, whichRandom = c("ID", "item"))
+BTU2 <- lmBF(data=tas_u, xcoord ~ group * selection + novelty + ID + item, whichRandom = c("ID", "item"))
+BTU3 <- lmBF(data=tas_u, xcoord ~ group * selection +  ID + item, whichRandom = c("ID", "item"))
+BTU4 <- lmBF(data=tas_u, xcoord ~ group + selection + ID + item, whichRandom = c("ID", "item"))
+BTU5 <- lmBF(data=tas_u, xcoord ~ group + ID + item, whichRandom = c("ID", "item"))
+BTU6 <- lmBF(data=tas_u, xcoord ~ selection + ID + item, whichRandom = c("ID", "item"))
+BTU7 <- lmBF(data=tas_u, xcoord ~ group * novelty + selection + ID + item, whichRandom = c("ID", "item"))
+BTU8 <- lmBF(data=tas_u, xcoord ~ group + novelty + selection + ID + item, whichRandom = c("ID", "item"))
+
+
+#Get ouput for all 'tas_u' models
+BTU_all <- c(BTU1, BTU2, BTU3, BTU4, BTU5, BTU6, BTU7, BTU8)
+```
+
+```{r}
+#Top models
+head(BTU_all)@bayesFactor[1]
+```
+
+
+```{r}
+#Desire to eat ratings - unhealthy foods
+BDU1 <- lmBF(data=des_u, xcoord ~ group * selection * novelty + ID + item, whichRandom = c("ID", "item"))
+BDU2 <- lmBF(data=des_u, xcoord ~ group * selection + novelty + ID + item, whichRandom = c("ID", "item"))
+BDU3 <- lmBF(data=des_u, xcoord ~ group * selection +  ID + item, whichRandom = c("ID", "item"))
+BDU4 <- lmBF(data=des_u, xcoord ~ group + selection + ID + item, whichRandom = c("ID", "item"))
+BDU5 <- lmBF(data=des_u, xcoord ~ group + ID + item, whichRandom = c("ID", "item"))
+BDU6 <- lmBF(data=des_u, xcoord ~ selection + ID + item, whichRandom = c("ID", "item"))
+BDU7 <- lmBF(data=des_u, xcoord ~ group * novelty + selection + ID + item, whichRandom = c("ID", "item"))
+BDU8 <- lmBF(data=des_u, xcoord ~ group + novelty + selection + ID + item, whichRandom = c("ID", "item"))
+
+#Get ouput for all 'tas_u' models
+BDU_all <- c(BDU1, BDU2, BDU3, BDU4, BDU5, BDU6, BDU7, BDU8)
+```
+
+```{r}
+#Top models
+head(BDU_all)@bayesFactor[1]
+```
+
+
+```{r}
+#Desire to eat ratings - unhealthy foods
+BTH1 <- lmBF(data=tas_h, xcoord ~ group * selection * novelty + ID + item, whichRandom = c("ID", "item"))
+BTH2 <- lmBF(data=tas_h, xcoord ~ group * selection + novelty + ID + item, whichRandom = c("ID", "item"))
+BTH3 <- lmBF(data=tas_h, xcoord ~ group * selection +  ID + item, whichRandom = c("ID", "item"))
+BTH4 <- lmBF(data=tas_h, xcoord ~ group + selection + ID + item, whichRandom = c("ID", "item"))
+BTH5 <- lmBF(data=tas_h, xcoord ~ group + ID + item, whichRandom = c("ID", "item"))
+BTH6 <- lmBF(data=tas_h, xcoord ~ selection + ID + item, whichRandom = c("ID", "item"))
+BTH7 <- lmBF(data=tas_h, xcoord ~ group * novelty + selection + ID + item, whichRandom = c("ID", "item"))
+BTH8 <- lmBF(data=tas_h, xcoord ~ group + novelty + selection + ID + item, whichRandom = c("ID", "item"))
+
+#Get ouput for all 'tas_u' models
+BTH_all <- c(BTH1, BTH2, BTH3, BTH4, BTH5, BTH6, BTH7, BTH8)
+```
+
+```{r}
+#Top models
+head(BTH_all)@bayesFactor[1]
+```
+
+```{r}
+#Desire to eat ratings - unhealthy foods
+BDH1 <- lmBF(data=des_h, xcoord ~ group * selection * novelty + ID + item, whichRandom = c("ID", "item"))
+BDH2 <- lmBF(data=des_h, xcoord ~ group * selection + novelty + ID + item, whichRandom = c("ID", "item"))
+BDH3 <- lmBF(data=des_h, xcoord ~ group * selection +  ID + item, whichRandom = c("ID", "item"))
+BDH4 <- lmBF(data=des_h, xcoord ~ group + selection + ID + item, whichRandom = c("ID", "item"))
+BDH5 <- lmBF(data=des_h, xcoord ~ group + ID + item, whichRandom = c("ID", "item"))
+BDH6 <- lmBF(data=des_h, xcoord ~ selection + ID + item, whichRandom = c("ID", "item"))
+BDH7 <- lmBF(data=des_h, xcoord ~ group * novelty + selection + ID + item, whichRandom = c("ID", "item"))
+BDH8 <- lmBF(data=des_h, xcoord ~ group + novelty + selection + ID + item, whichRandom = c("ID", "item"))
+
+#Get ouput for all 'tas_u' models
+BDH_all <- c(BDH1, BDH2, BDH3, BDH4, BDH5, BDH6, BDH7, BDH8)
+```
+
+```{r}
+#Top models
+head(BDH_all)@bayesFactor[1]
+```
+
+## Interaction effects
+
+```{r}
+BTU3/BTU4
+```
+
+```{r}
+FTU3 <- lmer(data=tas_u, xcoord ~ group * selection +  (1|ID) + (1|item))
+FTU4 <- lmer(data=tas_u, xcoord ~ group + selection +  (1|ID) + (1|item))
+
+anova(FTU3, FTU4)
+```
+
+```{r}
+BDU3/BDU4
+```
+```{r}
+FDU3 <- lmer(data=des_u, xcoord ~ group * selection +  (1|ID)+ (1|item))
+FDU4 <- lmer(data=des_u, xcoord ~ group + selection +  (1|ID)+ (1|item))
+
+anova(FDU3, FDU4)
+```
+
+```{r}
+BTH3/BTH4
+```
+
+```{r}
+FTH3 <- lmer(data=tas_h, xcoord ~ group * selection +  (1|ID)+ (1|item))
+FTH4 <- lmer(data=tas_h, xcoord ~ group + selection +  (1|ID)+ (1|item))
+
+anova(FTH3, FTH4)
+```
+
+```{r}
+BDH3/BDH4
+```
+
+```{r}
+FDH3 <- lmer(data=des_h, xcoord ~ group * selection +  (1|ID)+ (1|item))
+FDH4 <- lmer(data=des_h, xcoord ~ group + selection +  (1|ID)+ (1|item))
+
+anova(FDH3, FDH4)
+```
+
+* Three-way interaction vs only additive effect of novelty
+```{r}
+BTU1 / BTU2
+```
+
+```{r}
+FTU1 <- lmer(data=tas_u, xcoord ~ group * selection * novelty +  (1|ID)+ (1|item))
+FTU2 <- lmer(data=tas_u, xcoord ~ group * selection + novelty +  (1|ID)+ (1|item))
+
+anova(FTU1, FTU2)
+```
+
+```{r}
+BTH1 / BTH2
+```
+
+```{r}
+FTH1 <- lmer(data=tas_h, xcoord ~ group * selection * novelty +  (1|ID)+ (1|item))
+FTH2 <- lmer(data=tas_h, xcoord ~ group * selection + novelty +  (1|ID)+ (1|item))
+
+anova(FTH1, FTH2)
+```
+
+```{r}
+BDU1 / BDU2
+```
+
+```{r}
+FDU1 <- lmer(data=des_u, xcoord ~ group * selection * novelty +  (1|ID)+ (1|item))
+FDU2 <- lmer(data=des_u, xcoord ~ group * selection + novelty +  (1|ID)+ (1|item))
+
+anova(FDU1, FDU2)
+```
+
+```{r}
+BDH1 / BDH2
+```
+
+```{r}
+FDH1 <- lmer(data=des_h, xcoord ~ group * selection * novelty +  (1|ID)+ (1|item))
+FDH2 <- lmer(data=des_h, xcoord ~ group * selection + novelty +  (1|ID)+ (1|item))
+
+anova(FDH1, FDH2)
+```
+
+## Model diagnostic plots [optional]
+
+```{r}
+ggplot(FTU1, aes(y= residuals(FTU1), x=fitted.values(FTU1))) + geom_point(size=1, colour="blue", shape=19, alpha=0.15) + 
+  geom_hline(yintercept=0, alpha=0.4) + theme_minimal_grid(font_size = 15, font_family = "Palatino") +
+  xlab("\nFitted values") + ylab("Residuals\n") + ggplot2::ggtitle(expression("Full model for evaluations"["unhealthy"]))
+
+ggsave("ftu1.fitted.png", dpi=300, height=5, width = 7)
+
+ggplot(FTU1, aes(resid(FTU1))) + geom_density(alpha=.2, fill="blue") + theme_minimal_grid(font_size = 15, font_family = "Palatino") + ylab("Density\n") + xlab("\nResiduals")+    stat_function(fun = dnorm, args = list(mean = mean(resid(FTU1)), sd = sd(resid(FTU1))), color="red", size=1)
+
+ggsave("ftu1.norm.png", dpi=300, height=5, width = 7)
+
+ggplot(FTH1, aes(y= residuals(FTH1), x=fitted.values(FTH1))) + geom_point(size=1, colour="purple", shape=19, alpha=0.15) + 
+  geom_hline(yintercept=0, alpha=0.4) + theme_minimal_grid(font_size = 15, font_family = "Palatino") +
+  xlab("\nFitted values") + ylab("Residuals\n") + ggplot2::ggtitle(expression("Full model for evaluations"["healthy"]))
+
+ggsave("fth1.fitted.png", dpi=300, height=5, width = 7)
+
+ggplot(FTH1, aes(resid(FTH1))) + geom_density(alpha=.2, fill="purple") + theme_minimal_grid(font_size = 15, font_family = "Palatino") + ylab("Density\n") + xlab("\nResiduals")+    stat_function(fun = dnorm, args = list(mean = mean(resid(FTH1)), sd = sd(resid(FTH1))), color="red", size=1)
+
+ggsave("fth1.norm.png", dpi=300, height=5, width = 7)
+
+
+ggplot(FDU1, aes(y= residuals(FDU1), x=fitted.values(FDU1))) + geom_point(size=1, colour="magenta", shape=19, alpha=0.15) + 
+  geom_hline(yintercept=0, alpha=0.4) + theme_minimal_grid(font_size = 15, font_family = "Palatino") +
+  xlab("\nFitted values") + ylab("Residuals\n") + ggplot2::ggtitle(expression("Full model for cravings"["unhealthy"]))
+
+ggsave("fdu1.fitted.png", dpi=300, height=5, width = 7)
+
+ggplot(FDU1, aes(resid(FDU1))) + geom_density(alpha=.2, fill="magenta") + theme_minimal_grid(font_size = 15, font_family = "Palatino") + ylab("Density\n") + xlab("\nResiduals")+    stat_function(fun = dnorm, args = list(mean = mean(resid(FDU1)), sd = sd(resid(FDU1))), color="red", size=1)
+
+ggsave("fdu1.norm.png", dpi=300, height=5, width = 7)
+
+
+ggplot(FDH1, aes(y= residuals(FDH1), x=fitted.values(FDH1))) + geom_point(size=1, colour="darkorange", shape=19, alpha=0.15) + 
+  geom_hline(yintercept=0, alpha=0.4) + theme_minimal_grid(font_size = 15, font_family = "Palatino") +
+  xlab("\nFitted values") + ylab("Residuals\n") + ggplot2::ggtitle(expression("Full model for cravings"["healthy"]))
+
+ggsave("fdh1.fitted.png", dpi=300, height=5, width = 7)
+
+ggplot(FDH1, aes(resid(FDH1))) + geom_density(alpha=.2, fill="darkorange") + theme_minimal_grid(font_size = 15, font_family = "Palatino") + ylab("Density\n") + xlab("\nResiduals")+    stat_function(fun = dnorm, args = list(mean = mean(resid(FDH1)), sd = sd(resid(FDH1))), color="red", size=1)
+
+ggsave("fdh1.norm.png", dpi=300, height=5, width = 7)
+
+```
+
+
+
