@@ -1,0 +1,1 @@
+Processed data from the explicit evaluation task (EET) can be saved in this folder for later access. The data can be subjected to LMM analyses.

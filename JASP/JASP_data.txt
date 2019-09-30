@@ -1,0 +1,1 @@
+All files that will be saved in this folder can be opened in JASP for further analyses (e.g., Bayesian independent samples t-tests) and inspection.
